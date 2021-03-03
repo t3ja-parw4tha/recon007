@@ -1,1390 +1,1174 @@
 #!/bin/bash
 
-. ./recon007.config
+# ================  configurations ==========
 
-SCRIPTPATH="$( cd "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )"
+amass_enum_timeout="30m" #(s:seconds,m:minutes,h:hours,d:days) amass sometime may go in loop because of wildcard domains or other, so this will let you stop amass after specific time
+subjack_threads=50 # 200 #threads to used by subjack tool (reduce if you want to reduce cpu usage)
+subjack_timeout=30       #(in seconds) max time that subjack should wait for requested page to load
+massdns_concurrent_lookups_cnt=10000 #[default:10000]  1000 is for less false positives # higher the value , greater the aggresiveness aganist resolvers, may get banned from few resolver for higher values
+wildcard_elimination_ptr_threshold=4 #(not doing exactly, use +x to actual value) in wildcard elimination, max number of domains that can point to same ip or cname
+httprobe_concurrency_level=30 #[default:20] httprobe concurrency level
+httprobe_timeout=3000    #(millisecods)[default:10000]
+chromium_path=$(which chromium)
+analysis_reverse_proxy_checks_max_procs=20  # not sure whether it uses all of these (haven't checked exatcly)
+aquatone_threads=3 # 5                  #[default:number of logical CPUs] Number of concurrent threads used by aquatone web screenshot tool
+aquatone_http_timeout=30000             #(milliseconds)[default: 3000] Timeout for HTTP requests
+aquatone_scan_timeout=1000              #(milliseconds)[default: 100] Timeout for port scans
+aquatone_screenshot_timeout=30000       #(milliseconds)[default: 30000] Timeout for screenshots
+reports_assets_overview_max_procs=1 # 4 #(notaccurate , exec one proc more than specified) max procs to used while generating assets overview reports
 
 
-start(){
+masscan_rate=10000 # not using as it missed a lot of ports
 
-	global_start=`date +%s`
+# ================  configurations ends ==========
 
-	if [ "$NOTIFICATION" = true ] ; then
-		NOTIFY="notify -silent"
-	else
-	    NOTIFY=""
-	fi
+#set -o errexit # (a.k.a. set -e) to make your script exit when a command fails.  add || true to commands that you allow to fail.
+#set -o nounset #(a.k.a. set -u) to exit when your script tries to use undeclared variables.
+#set -o xtrace #(a.k.a set -x) to trace what gets executed. Useful for debugging (optional).
+#set -o pipefail #in scripts to catch mysqldump fails in e.g. mysqldump |gzip. The exit status of the last command that threw a non-zero exit code is returned.
 
-	echo "****** 🙏 Thank you for making this world safer ******" | $NOTIFY
-	tools_installed
+# trap ctrl-c and call ctrl_c()
+trap ctrl_c INT
 
-	if [ -z "$domain" ]
-	then
-		if [ -n "$list" ]
-		then
-			if [ -z "$domain" ]
-			then
-				domain="Multi"
-				dir=$SCRIPTPATH/Recon/$domain
-				called_fn_dir=$dir/.called
-			fi
-			if [[ "$list" = /* ]]; then
-				install -D $list $dir/${domain}_probed.txt
-			else
-				install -D $SCRIPTPATH/$list $dir/${domain}_probed.txt
-			fi
-		fi
-	else
-		dir=$SCRIPTPATH/Recon/$domain
-		called_fn_dir=$dir/.called_fn
-	fi
-
-	if [ -z "$domain" ]
-	then
-		printf "\n\n${bred} No domain or list provided ${reset}\n\n"
-		exit
-	fi
-
-	if [ ! -d "$called_fn_dir" ]
-	then
-		mkdir -p $called_fn_dir
-	fi
-
-	cd $dir
-	mkdir -p .tmp
-	printf "\n"
-	printf "${bred} Target: ${domain}\n\n"
+function ctrl_c() {
+    echo -e $Yellow "[i]" $Red "Exiting abruptly .... :(" $Default
+    exit
 }
 
-function tools_installed(){
 
-	printf "\n\n${bgreen}#######################################################################\n"
-	printf "${bblue} Checking installed tools ${reset}\n\n"
+# \e[background;style;foregroundm
+Black="\033[0;30m"
+Red="\033[0;31m"
+Green="\033[0;32m"
+Yellow="\033[0;33m"
+Blue="\033[0;34m"
+Purple="\033[0;35m"
+Cyan="\033[0;36m"
+White="\033[0;37m"
+Default="\033[0;m"
 
-	allinstalled=true
+function show_usage(){
+    echo -e $Cyan "\n\tUsage:" $Green "mr_sec_recon.sh <program name> <action>" $Default
 
-	[ -n "$GOPATH" ] || { printf "${bred} [*] GOPATH var		[NO]${reset}\n"; allinstalled=false;}
-	[ -n "$GOROOT" ] || { printf "${bred} [*] GOROOT var		[NO]${reset}\n"; allinstalled=false;}
-	[ -n "$PATH" ] || { printf "${bred} [*] PATH var		[NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/degoogle_hunter/degoogle.py ] || { printf "${bred} [*] degoogle		[NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/ParamSpider/paramspider.py ] || { printf "${bred} [*] Paramspider	[NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/fav-up/favUp.py ] || { printf "${bred} [*] fav-up		[NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/Corsy/corsy.py ] || { printf "${bred} [*] Corsy		[NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/testssl.sh/testssl.sh ] || { printf "${bred} [*] testssl		[NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/CMSeeK/cmseek.py ] || { printf "${bred} [*] CMSeeK		[NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/fuzz_wordlist.txt ] || { printf "${bred} [*] OneListForAll	[NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/LinkFinder/linkfinder.py ] || { printf "${bred} [*] LinkFinder	        [NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/GitDorker/GitDorker.py ] || { printf "${bred} [*] GitDorker	        [NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/webscreenshot/webscreenshot.py ] || { printf "${bred} [*] webscreenshot	[NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/degoogle_hunter/degoogle_hunter.sh ] || { printf "${bred} [*] degoogle_hunter	[NO]${reset}\n"; allinstalled=false;}
-	[ -f $tools/getjswords.py ] || { printf "${bred} [*] getjswords   	[NO]${reset}\n"; allinstalled=false;}
-	eval type -P arjun $DEBUG_STD || { printf "${bred} [*] Arjun		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P github-endpoints $DEBUG_STD || { printf "${bred} [*] github-endpoints		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P gospider $DEBUG_STD || { printf "${bred} [*] gospider		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P subfinder $DEBUG_STD || { printf "${bred} [*] Subfinder		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P assetfinder $DEBUG_STD || { printf "${bred} [*] Assetfinder		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P findomain $DEBUG_STD || { printf "${bred} [*] Findomain		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P amass $DEBUG_STD || { printf "${bred} [*] Amass		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P crobat $DEBUG_STD || { printf "${bred} [*] Crobat		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P waybackurls $DEBUG_STD || { printf "${bred} [*] Waybackurls		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P gau $DEBUG_STD || { printf "${bred} [*] Gau		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P dnsx $DEBUG_STD || { printf "${bred} [*] dnsx		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P shuffledns $DEBUG_STD || { printf "${bred} [*] ShuffleDns		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P cf-check $DEBUG_STD || { printf "${bred} [*] Cf-check		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P nuclei $DEBUG_STD || { printf "${bred} [*] Nuclei		[NO]${reset}\n"; allinstalled=false;}
-	[ -d ~/nuclei-templates ] || { printf "${bred} [*] Nuclei templates    [NO]${reset}\n"; allinstalled=false;}
-	eval type -P gf $DEBUG_STD || { printf "${bred} [*] Gf		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P Gxss $DEBUG_STD || { printf "${bred} [*] Gxss		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P subjs $DEBUG_STD || { printf "${bred} [*] subjs		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P ffuf $DEBUG_STD || { printf "${bred} [*] ffuf		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P massdns $DEBUG_STD || { printf "${bred} [*] Massdns		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P qsreplace $DEBUG_STD || { printf "${bred} [*] qsreplace		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P interlace $DEBUG_STD || { printf "${bred} [*] interlace		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P hakrawler $DEBUG_STD || { printf "${bred} [*] hakrawler		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P dnsgen $DEBUG_STD || { printf "${bred} [*] DnsGen		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P anew $DEBUG_STD || { printf "${bred} [*] Anew		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P unfurl $DEBUG_STD || { printf "${bred} [*] unfurl		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P crlfuzz $DEBUG_STD || { printf "${bred} [*] crlfuzz		[NO]${reset}\n"; allinstalled=false;}
-	eval type -P httpx $DEBUG_STD || { printf "${bred} [*] Httpx		[NO]${reset}\n${reset}"; allinstalled=false;}
-	eval type -P jq $DEBUG_STD || { printf "${bred} [*] jq			[NO]${reset}\n${reset}"; allinstalled=false;}
-	eval type -P notify $DEBUG_STD || { printf "${bred} [*] notify		[NO]${reset}\n${reset}"; allinstalled=false;}
+    echo -e $Cyan "\n\tDetails:" $Green "<action> : start - execute the flow from begining irrespective of progress in flow of each domain" $Default
+    echo -e $Cyan "\t        " $Green "         : resume - resume flow execution of each domain from previously halt" $Default
 
-	if [ "${allinstalled}" = true ] ; then
-		printf "${bgreen} Good! All installed! ${reset}\n\n"
-	else
-		printf "\n${yellow} Try running the installer script again ./install.sh"
-		printf "\n${yellow} If it fails for any reason try to install manually the tools missed"
-		printf "\n${yellow} Finally remember to set the ${bred}\$tools${yellow} variable at the start of this script"
-		printf "\n${yellow} If nothing works and the world is gonna end you can always ping me :D ${reset}\n\n"
-	fi
+    echo -e $Cyan "\n\t        " $Green "1. when you run the tools for first time, project structure will be created. Then do following" $Default
 
-	printf "${bblue} Tools check finished\n"
-	printf "${bgreen}#######################################################################\n"
+    echo -e $Cyan "\t        " $Green "2.Fill <program name>/recon/root_domains/all_root_domains.txt with Top Level Domain Names." $Default
+
+    echo -e $Cyan "\t        " $Green "3. Fill <program name>/inscope_patterns.txt with regex patterns that matches domains and subdomains in scope." $Default
+    echo -e $Cyan"\t\t         " $Purple "If you have everything in scope fill this file with .* " $Default
+
+    echo -e $Cyan "\t        " $Green "4. Fill <program name>/outscope_patterns.txt with regex patterns that matches domains and subdomains in scope." $Default
+    echo -e $Cyan"\t\t         " $Purple "If you have nothing out of scope leave this file with empty" $Default
+
+    echo -e $Cyan "\n\tExample:" $Green "mr_sec_recon.sh paypal start" $Default
+
+    echo -e $Cyan "\n\tNote: " $Green "1. priority of execution flow of each domain depends on the order of appearence in all_root_domains.txt file" $Default
+    echo -e $Cyan "\t      " $Green "2. flow will be in depth-first-order of root domains provided in all_root_domains.txt" $Default
+    echo -e $Cyan "\t      " $Green "3. Make sure all the api-keys are working for better results" $Default
+    echo -e $Cyan "\t      " $Green "4. If you find amass is using a lot of memery and time it might stuck with wildcard domains." $Default
+    echo -e $Cyan "\t      " $Green "    In that case for specific domain use the next block progress code in proj_files/progress/<domain name>" $Default
 }
 
-function tools_full(){
 
-	printf "\n\n${bgreen}#######################################################################\n"
-	printf "${bblue} Checking installed tools ${reset}\n\n"
-	[ -n "$GOPATH" ] && printf "${bgreen}[*] GOPATH var		[YES]${reset}\n" || { printf "${bred} [*] GOPATH var		[NO]${reset}\n"; }
-	[ -n "$GOROOT" ] && printf "${bgreen}[*] GOROOT var		[YES]${reset}\n" || { printf "${bred} [*] GOROOT var		[NO]${reset}\n"; }
-	[ -n "$PATH" ] && printf "${bgreen}[*] PATH var		[YES]${reset}\n" || { printf "${bred} [*] PATH var		[NO]${reset}\n"; }
-	[ -f $tools/degoogle_hunter/degoogle.py ] && printf "${bgreen}[*] degoogle		[YES]${reset}\n" || printf "${bred} [*] degoogle		[NO]${reset}\n"
-	[ -f $tools/ParamSpider/paramspider.py ] && printf "${bgreen}[*] Paramspider		[YES]${reset}\n" || printf "${bred} [*] Paramspider	[NO]${reset}\n"
-	[ -f $tools/fav-up/favUp.py ] && printf "${bgreen}[*] fav-up		[YES]${reset}\n" || printf "${bred} [*] fav-up		[NO]${reset}\n"
-	[ -f $tools/Corsy/corsy.py ] && printf "${bgreen}[*] Corsy		[YES]${reset}\n" || printf "${bred} [*] Corsy		[NO]${reset}\n"
-	[ -f $tools/testssl.sh/testssl.sh ] && printf "${bgreen}[*] testssl		[YES]${reset}\n" || printf "${bred} [*] testssl		[NO]${reset}\n"
-	[ -f $tools/CMSeeK/cmseek.py ] && printf "${bgreen}[*] CMSeeK		[YES]${reset}\n" || printf "${bred} [*] CMSeeK		[NO]${reset}\n"
-	[ -f $tools/fuzz_wordlist.txt ] && printf "${bgreen}[*] OneListForAll	[YES]${reset}\n" || printf "${bred} [*] OneListForAll	[NO]${reset}\n"
-	[ -f $tools/LinkFinder/linkfinder.py ] && printf "${bgreen}[*] LinkFinder	        [YES]${reset}\n" || printf "${bred} [*] LinkFinder	        [NO]${reset}\n"
-	[ -f $tools/degoogle_hunter/degoogle_hunter.sh ] && printf "${bgreen}[*] degoogle_hunter	[YES]${reset}\n" || printf "${bred} [*] degoogle_hunter	[NO]${reset}\n"
-	[ -f $tools/GitDorker/GitDorker.py ] && printf "${bgreen}[*] GitDorker		[YES]${reset}\n" || printf "${bred} [*] GitDorker		[NO]${reset}\n"
-	[ -f $tools/webscreenshot/webscreenshot.py ] && printf "${bgreen}[*] webscreenshot	[YES]${reset}\n" || printf "${bred} [*] webscreenshot	[NO]${reset}\n"
-	[ -f $tools/getjswords.py ] && printf "${bgreen}[*] getjswords.py	[YES]${reset}\n" || printf "${bred} [*] getjswords.py	[NO]${reset}\n"
-	eval type -P arjun $DEBUG_STD && printf "${bgreen}[*] Arjun		[YES]${reset}\n" || { printf "${bred} [*] Arjun		[NO]${reset}\n"; }
-	eval type -P github-endpoints $DEBUG_STD && printf "${bgreen}[*] github-endpoints	[YES]${reset}\n" || { printf "${bred} [*] github-endpoints	[NO]${reset}\n"; }
-	eval type -P gospider $DEBUG_STD && printf "${bgreen}[*] gospider		[YES]${reset}\n" || { printf "${bred} [*] gospider		[NO]${reset}\n"; }
-	eval type -P subfinder $DEBUG_STD && printf "${bgreen}[*] Subfinder		[YES]${reset}\n" || { printf "${bred} [*] Subfinder		[NO]${reset}\n"; }
-	eval type -P assetfinder $DEBUG_STD && printf "${bgreen}[*] Assetfinder		[YES]${reset}\n" || { printf "${bred} [*] Assetfinder	[NO]${reset}\n"; }
-	eval type -P findomain $DEBUG_STD && printf "${bgreen}[*] Findomain		[YES]${reset}\n" || { printf "${bred} [*] Findomain		[NO]${reset}\n"; }
-	eval type -P amass $DEBUG_STD && printf "${bgreen}[*] Amass		[YES]${reset}\n" || { printf "${bred} [*] Amass		[NO]${reset}\n"; }
-	eval type -P crobat $DEBUG_STD && printf "${bgreen}[*] Crobat		[YES]${reset}\n" || { printf "${bred} [*] Crobat		[NO]${reset}\n"; }
-	eval type -P waybackurls $DEBUG_STD && printf "${bgreen}[*] Waybackurls		[YES]${reset}\n" || { printf "${bred} [*] Waybackurls	[NO]${reset}\n"; }
-	eval type -P gau $DEBUG_STD && printf "${bgreen}[*] Gau		        [YES]${reset}\n" || { printf "${bred} [*] Gau		[NO]${reset}\n"; }
-	eval type -P dnsx $DEBUG_STD && printf "${bgreen}[*] dnsx		[YES]${reset}\n" || { printf "${bred} [*] dnsx		[NO]${reset}\n"; }
-	eval type -P shuffledns $DEBUG_STD && printf "${bgreen}[*] ShuffleDns		[YES]${reset}\n" || { printf "${bred} [*] ShuffleDns		[NO]${reset}\n"; }
-	eval type -P cf-check $DEBUG_STD && printf "${bgreen}[*] Cf-check		[YES]${reset}\n" || { printf "${bred} [*] Cf-check		[NO]${reset}\n"; }
-	eval type -P nuclei $DEBUG_STD && printf "${bgreen}[*] Nuclei		[YES]${reset}\n" || { printf "${bred} [*] Nuclei		[NO]${reset}\n"; }
-	[ -d ~/nuclei-templates ] && printf "${bgreen}[*] Nuclei templates  	[YES]${reset}\n" || printf "${bred} [*] Nuclei templates  	[NO]${reset}\n"
-	eval type -P gf $DEBUG_STD && printf "${bgreen}[*] Gf		        [YES]${reset}\n" || { printf "${bred} [*] Gf			[NO]${reset}\n"; }
-	eval type -P Gxss $DEBUG_STD && printf "${bgreen}[*] Gxss		[YES]${reset}\n" || { printf "${bred} [*] Gxss		[NO]${reset}\n"; }
-	eval type -P subjs $DEBUG_STD && printf "${bgreen}[*] subjs		[YES]${reset}\n" || { printf "${bred} [*] subjs		[NO]${reset}\n"; }
-	eval type -P ffuf $DEBUG_STD && printf "${bgreen}[*] ffuf		[YES]${reset}\n" || { printf "${bred} [*] ffuf		[NO]${reset}\n"; }
-	eval type -P massdns $DEBUG_STD && printf "${bgreen}[*] Massdns		[YES]${reset}\n" || { printf "${bred} [*] Massdns		[NO]${reset}\n"; }
-	eval type -P qsreplace $DEBUG_STD && printf "${bgreen}[*] qsreplace		[YES]${reset}\n" || { printf "${bred} [*] qsreplace		[NO]${reset}\n"; }
-	eval type -P interlace $DEBUG_STD && printf "${bgreen}[*] interlace		[YES]${reset}\n" || { printf "${bred} [*] interlace		[NO]${reset}\n"; }
-	eval type -P hakrawler $DEBUG_STD && printf "${bgreen}[*] hakrawler		[YES]${reset}\n" || { printf "${bred} [*] hakrawler		[NO]${reset}\n"; }
-	eval type -P dnsgen $DEBUG_STD && printf "${bgreen}[*] DnsGen		[YES]${reset}\n" || { printf "${bred} [*] DnsGen		[NO]${reset}\n"; }
-	eval type -P anew $DEBUG_STD && printf "${bgreen}[*] Anew		[YES]${reset}\n" || { printf "${bred} [*] Anew		[NO]${reset}\n"; }
-	eval type -P unfurl $DEBUG_STD && printf "${bgreen}[*] unfurl		[YES]${reset}\n" || { printf "${bred} [*] unfurl		[NO]${reset}\n"; }
-	eval type -P crlfuzz $DEBUG_STD && printf "${bgreen}[*] crlfuzz		[YES]${reset}\n" || { printf "${bred} [*] crlfuzz		[NO]${reset}\n"; }
-	eval type -P httpx $DEBUG_STD && printf "${bgreen}[*] Httpx		[YES]${reset}\n${reset}" || { printf "${bred} [*] Httpx		[NO]${reset}\n${reset}"; }
-	eval type -P jq $DEBUG_STD && printf "${bgreen}[*] jq			[YES]${reset}\n${reset}" || { printf "${bred} [*] jq			[NO]${reset}\n${reset}"; }
-	eval type -P notify $DEBUG_STD && printf "${bgreen}[*] notify		[YES]${reset}\n${reset}" || { printf "${bred} [*] notify		[NO]${reset}\n${reset}"; }
-
-	printf "\n${yellow} If any tool is not installed under $tools, I trust in your ability to install it :D\n Also remember to set the ${bred}\$tools${yellow} variable at the start of this script.\n If you have any problem you can always ping me ;) ${reset}\n\n"
-	printf "${bblue} Tools check finished\n"
-	printf "${bgreen}#######################################################################\n"
-}
-
-dorks(){
-	if [ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] && [ "$DORKS" = true ]
-	then
-		start=`date +%s`
-		printf "${bgreen}#######################################################################\n"
-		printf "${bblue} Performing Google Dorks ${reset}\n\n"
-		$tools/degoogle_hunter/degoogle_hunter.sh $domain | tee ${domain}_dorks.txt
-		sed -r -i "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" ${domain}_dorks.txt && touch $called_fn_dir/.${FUNCNAME[0]}
-		end=`date +%s`
-		getElapsedTime $start $end
-		printf "$\n${bblue} Finished in ${runtime} Happy hunting! ${reset}\n"
-		printf "${bgreen}#######################################################################\n"
-	else
-		printf "${yellow} ${FUNCNAME[0]} are already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-subdomains_full(){
-	NUMOFLINES_subs="0"
-	NUMOFLINES_probed="0"
-	printf "${bgreen}#######################################################################\n\n"
-	printf "${bblue} Subdomain Enumeration\n\n"
-	if [ -f "${domain}_subdomains.txt" ]
-	then
-		eval cp ${domain}_subdomains.txt .tmp/${domain}_subdomains_old.txt $DEBUG_ERROR
-	fi
-	if [ -f "${domain}_probed.txt" ]
-	then
-		eval cp ${domain}_probed.txt .tmp/${domain}_probed_old.txt $DEBUG_ERROR
-	fi
-	sub_passive
-	sub_crt
-	sub_brute
-	sub_dns
-	sub_scraping
-	sub_permut
-	webprobe_simple
-	if [ -f "${domain}_subdomains.txt" ]
-		then
-			deleteOutScoped $outOfScope_file ${domain}_subdomains.txt
-			NUMOFLINES_subs=$(eval cat ${domain}_subdomains.txt $DEBUG_ERROR | anew .tmp/${domain}_subdomains_old.txt | wc -l)
-	fi
-	if [ -f "${domain}_probed.txt" ]
-		then
-			deleteOutScoped $outOfScope_file ${domain}_probed.txt
-			NUMOFLINES_probed=$(eval cat ${domain}_probed.txt $DEBUG_ERROR | anew .tmp/${domain}_probed_old.txt | wc -l)
-	fi
-	printf "${bblue}\n Total subdomains: ${reset}\n\n"
-	text="${bred}\n - ${NUMOFLINES_subs} new alive subdomains${reset}\n\n"
-	printf "${text}" && printf "${text}" | $NOTIFY
-	eval cat ${domain}_subdomains.txt $DEBUG_ERROR | sort
-	text="${bred}\n - ${NUMOFLINES_probed} new web probed${reset}\n\n"
-	printf "${text}" && printf "${text}" | $NOTIFY
-	eval cat ${domain}_probed.txt $DEBUG_ERROR | sort
-	text="${bblue}\n Subdomain Enumeration Finished\n"
-	printf "${text}" && printf "${text}" | $NOTIFY
-	printf "${bblue} Results are saved in ${domain}_subdomains.txt and ${domain}_probed.txt${reset}\n"
-	printf "${bgreen}#######################################################################\n\n"
-}
-
-sub_passive(){
-	if [ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]
-		then
-			start=`date +%s`
-			printf "${yellow} Running : Passive Subdomain Enumeration${reset}\n"
-			eval subfinder -d $domain -o .tmp/subfinder.txt $DEBUG_STD
-			eval assetfinder --subs-only $domain $DEBUG_ERROR | anew -q .tmp/assetfinder.txt
-			eval amass enum -passive -d $domain -config $AMASS_CONFIG -o .tmp/amass.txt $DEBUG_STD
-			eval findomain --quiet -t $domain -u .tmp/findomain.txt $DEBUG_STD
-			eval crobat -s $domain $DEBUG_ERROR | anew -q .tmp/crobat.txt
-			timeout 5m waybackurls $domain | unfurl --unique domains | anew -q .tmp/waybackurls.txt
-			NUMOFLINES=$(eval cat .tmp/subfinder.txt .tmp/assetfinder.txt .tmp/amass.txt .tmp/findomain.txt .tmp/crobat.txt .tmp/waybackurls.txt $DEBUG_ERROR | sed "s/*.//" | anew .tmp/passive_subs.txt | wc -l)
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			if [ "$NUMOFLINES" -gt 0 ]; then
-				printf "${green} ${NUMOFLINES} new subdomains by passive found in ${runtime}${reset}\n\n"
-			fi
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-sub_crt(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$SUBCRT" = true ]
-		then
-			start=`date +%s`
-			printf "${yellow} Running : Crtsh Subdomain Enumeration${reset}\n"
-			cd $tools/crtfinder
-			eval python3 crtfinder.py -u $domain $DEBUG_STD
-			outputfile=${domain%%.*}
-			if [ "$FULLSCOPE" = true ] ; then
-				eval cat ${outputfile}.txt $DEBUG_ERROR | anew -q $dir/.tmp/crtsh_subs_tmp.txt
-			else
-				eval cat ${outputfile}.txt $DEBUG_ERROR | grep ".$domain$" | anew -q $dir/.tmp/crtsh_subs_tmp.txt
-			fi
-			if [ "$DEEP" = true ] ; then
-				eval python3 dig.py ${outputfile}.txt > ${domain}_more.txt $DEBUG_STD
-				if [ "$FULLSCOPE" = true ] ; then
-					eval cat ${domain}_more.txt $DEBUG_ERROR | anew -q $dir/.tmp/crtsh_subs_tmp.txt
-				else
-					eval cat ${domain}_more.txt $DEBUG_ERROR | grep ".$domain$" | anew -q $dir/.tmp/crtsh_subs_tmp.txt
-				fi
-				eval rm ${domain}_more.txt $DEBUG_ERROR
-			fi
-			eval rm ${outputfile}.txt $DEBUG_ERROR
-			cd $dir
-			if [ "$FULLSCOPE" = true ] ; then
-				eval curl "https://tls.bufferover.run/dns?q=.${domain}" $DEBUG_ERROR | eval jq -r .Results[] $DEBUG_ERROR | cut -d ',' -f3 | anew -q .tmp/crtsh_subs_tmp.txt
-				eval curl "https://dns.bufferover.run/dns?q=.${domain}" $DEBUG_ERROR | eval jq -r '.FDNS_A'[],'.RDNS'[] $DEBUG_ERROR | cut -d ',' -f2 | anew -q .tmp/crtsh_subs_tmp.txt
-			else
-				eval curl "https://tls.bufferover.run/dns?q=.${domain}" $DEBUG_ERROR | eval jq -r .Results[] $DEBUG_ERROR | cut -d ',' -f3 | grep -F ".$domain" | anew -q .tmp/crtsh_subs.txt
-				eval curl "https://dns.bufferover.run/dns?q=.${domain}" $DEBUG_ERROR | eval jq -r '.FDNS_A'[],'.RDNS'[] $DEBUG_ERROR | cut -d ',' -f2 | grep -F ".$domain" | anew -q .tmp/crtsh_subs_tmp.txt
-			fi
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			NUMOFLINES=$(eval cat .tmp/crtsh_subs_tmp.txt $DEBUG_ERROR | anew .tmp/crtsh_subs.txt | wc -l)
-			end=`date +%s`
-			getElapsedTime $start $end
-			if [ "$NUMOFLINES" -gt 0 ]; then
-				printf "${green} ${NUMOFLINES} new subdomains by certificate transparency found in ${runtime}${reset}\n\n"
-			fi
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-sub_brute(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$SUBBRUTE" = true ]
-		then
-			start=`date +%s`
-			printf "${yellow} Running : Bruteforce Subdomain Enumeration${reset}\n"
-			eval shuffledns -d $domain -w $subs_wordlist -r $resolvers -t 5000 -o .tmp/active_tmp.txt $DEBUG_STD
-			NUMOFLINES=$(eval cat .tmp/active_tmp.txt $DEBUG_ERROR | sed "s/*.//" | anew .tmp/brute_subs.txt | wc -l)
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			if [ "$NUMOFLINES" -gt 0 ]; then
-				printf "${green} ${NUMOFLINES} new subdomains by bruteforce found in ${runtime}${reset}\n\n"
-			fi
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-sub_dns(){
-	if [ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]
-		then
-			start=`date +%s`
-			printf "${yellow} Running : Active Subdomain Enumeration${reset}\n"
-			cat .tmp/*_subs.txt | anew -q .tmp/subs_no_resolved.txt
-			deleteOutScoped $outOfScope_file .tmp/subs_no_resolved.txt
-			eval shuffledns -d $domain -list .tmp/subs_no_resolved.txt -r $resolvers -t 5000 -o .tmp/${domain}_subdomains_tmp.txt $DEBUG_STD
-			echo $domain | dnsx -silent | anew -q .tmp/${domain}_subdomains_tmp.txt
-			dnsx -retry 3 -silent -cname -resp-only -l .tmp/${domain}_subdomains_tmp.txt | grep ".$domain$" | anew -q .tmp/${domain}_subdomains_tmp.txt
-			eval dnsx -retry 3 -silent -cname -resp -l ${domain}_subdomains.txt -o ${domain}_subdomains_cname.txt $DEBUG_STD
-			NUMOFLINES=$(cat .tmp/${domain}_subdomains_tmp.txt | anew ${domain}_subdomains.txt | wc -l)
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			if [ "$NUMOFLINES" -gt 0 ]; then
-				printf "${green} ${NUMOFLINES} new subdomains by dns resolution found in ${runtime}${reset}\n\n"
-			fi
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-sub_scraping(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$SUBSCRAPING" = true ]
-		then
-			start=`date +%s`
-			printf "${yellow} Running : Source code scraping subdomain search${reset}\n"
-			touch .tmp/scrap_subs.txt
-			cat ${domain}_subdomains.txt | httpx -follow-host-redirects -H "${HEADER}" -status-code -timeout 15 -silent -no-color | cut -d ' ' -f1 | grep ".$domain$" | anew -q .tmp/${domain}_probed_tmp.txt
-			cat .tmp/${domain}_probed_tmp.txt | hakrawler -subs -plain -linkfinder -insecure | anew -q .tmp/scrap_subs.txt
-			cat .tmp/scrap_subs.txt | eval shuffledns -d $domain -r $resolvers -t 5000 -o .tmp/scrap_subs_resolved.txt $DEBUG_STD
-			NUMOFLINES=$(eval cat .tmp/scrap_subs_resolved.txt $DEBUG_ERROR | anew ${domain}_subdomains.txt | wc -l)
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			if [ "$NUMOFLINES" -gt 0 ]; then
-				printf "${green} ${NUMOFLINES} new subdomains by scraping found in ${runtime}${reset}\n\n"
-			fi
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-sub_permut(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$SUBPERMUTE" = true ]
-		then
-			start=`date +%s`
-			printf "${yellow} Running : Permutations Subdomain Enumeration${reset}\n"
-			if [[ $(cat .tmp/subs_no_resolved.txt | wc -l) -le 50 ]]
-				then
-					eval dnsgen .tmp/subs_no_resolved.txt --wordlist $tools/permutations_list.txt $DEBUG_ERROR | eval shuffledns -d $domain -r $resolvers -t 5000 -o .tmp/permute1_tmp.txt $DEBUG_STD
-					eval cat .tmp/permute1_tmp.txt $DEBUG_ERROR | anew -q .tmp/permute1.txt
-					eval dnsgen .tmp/permute1.txt --wordlist $tools/permutations_list.txt $DEBUG_ERROR | eval shuffledns -d $domain -r $resolvers -t 5000 -o .tmp/permute2_tmp.txt $DEBUG_STD
-					eval cat .tmp/permute2_tmp.txt $DEBUG_ERROR | anew -q .tmp/permute2.txt
-					eval cat .tmp/permute1.txt .tmp/permute2.txt $DEBUG_ERROR | anew -q .tmp/permute_subs.txt
-				elif [[ $(cat .tmp/subs_no_resolved.txt | wc -l) -le 100 ]]
-		  		then
-					eval dnsgen .tmp/subs_no_resolved.txt --wordlist $tools/permutations_list.txt $DEBUG_ERROR | eval shuffledns -d $domain -r $resolvers -t 5000 -o .tmp/permute_tmp.txt $DEBUG_STD
-					eval cat .tmp/permute_tmp.txt $DEBUG_ERROR | anew -q .tmp/permute_subs.txt
-				else
-					if [[ $(cat ${domain}_subdomains.txt | wc -l) -le 50 ]]
-						then
-							eval dnsgen ${domain}_subdomains.txt --wordlist $tools/permutations_list.txt $DEBUG_ERROR | eval shuffledns -d $domain -r $resolvers -t 5000 -o .tmp/permute1_tmp.txt $DEBUG_STD
-							eval cat .tmp/permute1_tmp.txt $DEBUG_ERROR | anew -q .tmp/permute1.txt
-							eval dnsgen .tmp/permute1.txt --wordlist $tools/permutations_list.txt $DEBUG_ERROR | eval shuffledns -d $domain -r $resolvers -t 5000 -o .tmp/permute2_tmp.txt $DEBUG_STD
-							eval cat .tmp/permute2_tmp.txt $DEBUG_ERROR | anew -q .tmp/permute2.txt
-							eval cat .tmp/permute1.txt .tmp/permute2.txt $DEBUG_ERROR | anew -q .tmp/permute_subs.txt
-						elif [[ $(cat ${domain}_subdomains.txt | wc -l) -le 100 ]]
-						then
-							eval dnsgen ${domain}_subdomains.txt --wordlist $tools/permutations_list.txt $DEBUG_ERROR | eval shuffledns -d $domain -r $resolvers -t 5000 -o .tmp/permute_tmp.txt $DEBUG_STD
-							eval cat .tmp/permute_tmp.txt $DEBUG_ERROR | anew -q .tmp/permute_subs.txt
-						else
-							printf "\n${bred} Skipping Permutations: Too Much Subdomains${reset}\n\n"
-					fi
-			fi
-			if [ -f ".tmp/permute_subs.txt" ]
-			then
-				deleteOutScoped $outOfScope_file .tmp/permute_subs.txt
-				NUMOFLINES=$(eval cat .tmp/permute_subs.txt $DEBUG_ERROR | anew ${domain}_subdomains.txt | wc -l)
-			else
-				NUMOFLINES=0
-			fi
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			if [ "$NUMOFLINES" -gt 0 ]; then
-				printf "${green} ${NUMOFLINES} new subdomains by permutations found in ${runtime}${reset}\n\n"
-			fi
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-webprobe_simple(){
-	if [ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]
-		then
-			start=`date +%s`
-			printf "${yellow} Running : Http probing${reset}\n\n"
-			cat ${domain}_subdomains.txt | httpx -follow-host-redirects -H "${HEADER}" -status-code -timeout 15 -silent -no-color | cut -d ' ' -f1 | grep ".$domain$" | anew -q .tmp/${domain}_probed_tmp.txt
-			deleteOutScoped $outOfScope_file .tmp/${domain}_probed_tmp.txt
-			NUMOFLINES=$(eval cat .tmp/${domain}_probed_tmp.txt $DEBUG_ERROR | anew ${domain}_probed.txt | wc -l)
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			if [ "$NUMOFLINES" -gt 0 ]; then
-				printf "${green} ${NUMOFLINES} new websites resolved in ${runtime}${reset}\n\n"
-			fi
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-subtakeover(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$SUBTAKEOVER" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} Subdomain Takeover ${reset}\n\n"
-			start=`date +%s`
-			touch .tmp/tko.txt
-			cat ${domain}_probed.txt | nuclei -silent -H "${HEADER}" -t ~/nuclei-templates/takeovers/ -o .tmp/tko.txt
-			NUMOFLINES=$(eval cat .tmp/tko.txt $DEBUG_ERROR | anew ${domain}_takeover.txt | wc -l)
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			if [ "$NUMOFLINES" -gt 0 ]; then
-				text="${bred}\n ${NUMOFLINES} new possible takeovers found in ${runtime}${reset}\n\n"
-			fi
-			printf "${text}" && printf "${text}" | $NOTIFY
-			printf "${bblue}\n Subdomain Takeover Finished\n"
-			printf "${bblue} Results are saved in ${domain}_takeover.txt${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-webprobe_full(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$WEBPROBEFULL" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} ${bgreen} Web Probe ${reset}\n\n"
-			printf "${yellow} Running : Http probing non standard ports${reset}\n\n"
-			start=`date +%s`
-			cat ${domain}_subdomains.txt | httpx -ports 81,300,591,593,832,981,1010,1311,1099,2082,2095,2096,2480,3000,3128,3333,4243,4567,4711,4712,4993,5000,5104,5108,5280,5281,5601,5800,6543,7000,7001,7396,7474,8000,8001,8008,8014,8042,8060,8069,8080,8081,8083,8088,8090,8091,8095,8118,8123,8172,8181,8222,8243,8280,8281,8333,8337,8443,8500,8834,8880,8888,8983,9000,9001,9043,9060,9080,9090,9091,9200,9443,9502,9800,9981,10000,10250,11371,12443,15672,16080,17778,18091,18092,20720,32000,55672 -follow-host-redirects -H "${HEADER}" -status-code -threads 150 -timeout 10 -silent -no-color | cut -d ' ' -f1 | grep ".$domain" | anew -q .tmp/${domain}_probed_uncommon_ports.txt
-			NUMOFLINES=$(eval cat .tmp/${domain}_probed_uncommon_ports.txt $DEBUG_ERROR | anew ${domain}_probed_uncommon_ports.txt | wc -l)
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			if [ "$NUMOFLINES" -gt 0 ]; then
-				printf "${bred}\n Uncommon web ports: ${NUMOFLINES} new websites in ${runtime}${reset}\n\n"
-				eval cat ${domain}_probed_uncommon_ports.txt $DEBUG_ERROR
-			fi
-			printf "${bblue}\n Web Probe Finished\n"
-			printf "${bblue} Results are saved in ${domain}_probed_uncommon_ports.txt${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-brokenLinks(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$BROKENLINKS" = true ] ; then
-		printf "${bgreen}#######################################################################\n"
-		printf "${bblue} Broken links checks ${reset}\n\n"
-		start=`date +%s`
-		interlace -tL ${domain}_probed.txt -threads 10 -c "wget --spider -r -nd -nv -H -l 1 -w 1 --no-check-certificate -U 'Mozilla' -o _output_/_cleantarget__brokenLinks.tmp _target_" -o .tmp &>/dev/null
-		cat .tmp/*_brokenLinks.tmp | grep "^http" | grep -v ':$' | anew -q .tmp/brokenLinks_total.txt
-		NUMOFLINES=$(eval cat .tmp/brokenLinks_total.txt $DEBUG_ERROR | cut -d ' ' -f2 | anew ${domain}_brokenLinks.txt | wc -l)
-		touch $called_fn_dir/.${FUNCNAME[0]}
-		end=`date +%s`
-		getElapsedTime $start $end
-		if [ "$NUMOFLINES" -gt 0 ]; then
-			text="${bred}\n ${NUMOFLINES} new broken links found in ${runtime}${reset}\n\n"
-		fi
-		printf "${bblue}\n Broken links checks Finished in ${runtime}\n"
-		printf "${bblue} Results are saved in ${domain}_brokenLinks.txt ${reset}\n"
-		printf "${bgreen}#######################################################################\n\n"
-	else
-		printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-screenshot(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$WEBSCREENSHOT" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} ${bgreen} Web Screenshot ${reset}\n\n"
-			start=`date +%s`
-			python3 $tools/webscreenshot/webscreenshot.py -i ${domain}_probed.txt -r chromium -w 4 -a "${HEADER}" -o screenshots &>/dev/null
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n Web Screenshot Finished in ${runtime}\n"
-			printf "${bblue} Results are saved in screenshots folder${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-portscan(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$PORTSCANNER" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} Port Scan ${reset}\n\n"
-			start=`date +%s`
-			for sub in $(cat ${domain}_subdomains.txt); do
-				echo "$sub $(dig +short a $sub | tail -n1)" | anew -q ${domain}_subdomains_ips.txt
-			done
-
-			cat ${domain}_subdomains_ips.txt | cut -d ' ' -f2 | cf-check -c $NPROC | egrep -iv "^(127|10|169|172|192)\." | anew -q .tmp/${domain}_ips_nowaf.txt
-
-			printf "${bblue}\n Resolved IP addresses (No WAF) ${reset}\n\n";
-			eval cat .tmp/${domain}_ips_nowaf.txt $DEBUG_ERROR | sort
-
-			if [ "$PORTSCAN_PASSIVE" = true ]
-			then
-				for sub in $(cat .tmp/${domain}_ips_nowaf.txt); do
-					shodan host $sub 2>/dev/null >> ${domain}_portscan_passive.txt && echo -e "\n\n#######################################################################\n\n" >> ${domain}_portscan_passive.txt
-				done
-			fi
-
-			if [ "$PORTSCAN_ACTIVE" = true ]
-			then
-				eval nmap --top-ports 1000 -sV -n --max-retries 2 -iL .tmp/${domain}_ips_nowaf.txt -oN ${domain}_portscan_active.txt $DEBUG_STD
-			fi
-
-			#eval cat ${domain}_portscan.txt $DEBUG_ERROR
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n Port scan Finished in ${runtime}${reset}\n"
-			printf "${bblue} Results are saved in ${domain}_portscan_[passive|active].txt${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-nuclei_check(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$NUCLEICHECK" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} Template Scanning with Nuclei ${reset}\n\n"
-			start=`date +%s`
-			eval nuclei -update-templates $DEBUG_STD
-			mkdir -p nuclei_output
-			printf "${yellow} Running : Nuclei Technologies${reset}\n\n"
-			cat ${domain}_probed.txt | nuclei -silent -H "${HEADER}" -t ~/nuclei-templates/technologies/ -o nuclei_output/${domain}_technologies.txt;
-			printf "${yellow}\n\n Running : Nuclei Tokens${reset}\n\n"
-			cat ${domain}_probed.txt | nuclei -silent -H "${HEADER}" -t ~/nuclei-templates/exposed-tokens/ -o nuclei_output/${domain}_tokens.txt;
-			printf "${yellow}\n\n Running : Nuclei Exposures${reset}\n\n"
-			cat ${domain}_probed.txt | nuclei -silent -H "${HEADER}" -t ~/nuclei-templates/exposures/ -o nuclei_output/${domain}_exposures.txt;
-			printf "${yellow}\n\n Running : Nuclei CVEs ${reset}\n\n"
-			cat ${domain}_probed.txt | nuclei -silent -H "${HEADER}" -t ~/nuclei-templates/cves/ -o nuclei_output/${domain}_cves.txt;
-			printf "${yellow}\n\n Running : Nuclei Default Creds ${reset}\n\n"
-			cat ${domain}_probed.txt | nuclei -silent -H "${HEADER}" -t ~/nuclei-templates/default-logins/ -o nuclei_output/${domain}_default_creds.txt;
-			printf "${yellow}\n\n Running : Nuclei DNS ${reset}\n\n"
-			cat ${domain}_probed.txt | nuclei -silent -H "${HEADER}" -t ~/nuclei-templates/dns/ -o nuclei_output/${domain}_dns.txt;
-			printf "${yellow}\n\n Running : Nuclei Panels ${reset}\n\n"
-			cat ${domain}_probed.txt | nuclei -silent -H "${HEADER}" -t ~/nuclei-templates/exposed-panels/ -o nuclei_output/${domain}_panels.txt;
-			printf "${yellow}\n\n Running : Nuclei Security Misconfiguration ${reset}\n\n"
-			cat ${domain}_probed.txt | nuclei -silent -H "${HEADER}" -t ~/nuclei-templates/misconfiguration/ -o nuclei_output/${domain}_misconfigurations.txt;
-			printf "${yellow}\n\n Running : Nuclei Vulnerabilites ${reset}\n\n"
-			cat ${domain}_probed.txt | nuclei -silent -H "${HEADER}" -t ~/nuclei-templates/vulnerabilities/ -o nuclei_output/${domain}_vulnerabilities.txt && touch $called_fn_dir/.${FUNCNAME[0]};
-			printf "\n\n"
-			end=`date +%s`
-			getElapsedTime $start $end
-			text="${bblue}\n Nuclei Scan Finished in ${runtime}\n"
-			printf "${text}" && printf "${text}" | $NOTIFY
-			printf "${bblue} Results are saved in nuclei_output folder ${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-urlchecks(){
-	if [ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} URL Extraction ${reset}\n\n"
-			start=`date +%s`
-			cat ${domain}_probed.txt | waybackurls | anew -q .tmp/${domain}_url_extract_tmp.txt
-			cat ${domain}_probed.txt | gau | anew -q .tmp/${domain}_url_extract_tmp.txt
-			if [ "$DEEP" = true ] ; then
-				cat ${domain}_probed.txt | hakrawler -urls -plain -linkfinder -insecure -depth 2 | anew -q .tmp/${domain}_url_extract_tmp.txt
-			else
-				cat ${domain}_probed.txt | hakrawler -urls -plain -linkfinder -insecure | anew -q .tmp/${domain}_url_extract_tmp.txt
-			fi
-			if [ -s "${GITHUB_TOKENS}" ]
-			then
-				eval github-endpoints -q -k -d $domain -t ${GITHUB_TOKENS} -raw $DEBUG_ERROR | anew -q .tmp/${domain}_url_extract_tmp.txt
-			fi
-			eval cat .tmp/${domain}_url_extract_tmp.txt ${domain}_param.txt $DEBUG_ERROR | grep "${domain}" | grep "=" | eval qsreplace -a $DEBUG_ERROR | egrep -iv "\.(eot|jpg|jpeg|gif|css|tif|tiff|png|ttf|otf|woff|woff2|ico|pdf|svg|txt|js)" | anew -q .tmp/${domain}_url_extract_tmp2.txt
-			cat .tmp/${domain}_url_extract_tmp.txt | grep "${domain}" | egrep -i "\.(js)" | anew -q ${domain}_url_extract_js.txt
-			eval uddup -u .tmp/${domain}_url_extract_tmp2.txt -o .tmp/${domain}_url_extract_uddup.txt $DEBUG_STD
-			NUMOFLINES=$(eval cat .tmp/${domain}_url_extract_uddup.txt $DEBUG_ERROR | anew ${domain}_url_extract.txt | wc -l)
-			touch $called_fn_dir/.${FUNCNAME[0]};
-			end=`date +%s`
-			getElapsedTime $start $end
-			text="${bblue}\n URL Extraction Finished\n"
-			printf "${text}" && printf "${text}" | $NOTIFY
-			if [ "$NUMOFLINES" -gt 0 ]; then
-				text="${bblue}\n ${NUMOFLINES} new urls in ${runtime}\n"
-				printf "${text}" && printf "${text}" | $NOTIFY
-			fi
-			printf "${bblue} Results are saved in ${domain}_url_extract.txt${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-wordlist_gen(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$WORDLIST" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} Wordlist generation ${reset}\n\n"
-			start=`date +%s`
-
-			cat .tmp/${domain}_url_extract_tmp.txt | unfurl -u keys | sed 's/[][]//g' | sed 's/[#]//g' | sed 's/[}{]//g' | anew -q ${domain}_dict_words.txt
-			cat .tmp/${domain}_url_extract_tmp.txt | unfurl -u path | anew -q ${domain}_dict_paths.txt
-
-			text="${bblue}\n Wordlists Generated\n"
-			printf "${text}" && printf "${text}" | $NOTIFY
-			printf "${bblue} Results are saved in ${domain}_dict_[words|paths].txt${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-url_gf(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$URL_GF" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} Vulnerable Pattern Search ${reset}\n\n"
-			start=`date +%s`
-			mkdir -p gf
-			gf xss ${domain}_url_extract.txt | anew -q gf/${domain}_xss.txt
-			gf ssti ${domain}_url_extract.txt | anew -q gf/${domain}_ssti.txt
-			gf ssrf ${domain}_url_extract.txt | anew -q gf/${domain}_ssrf.txt
-			gf sqli ${domain}_url_extract.txt | anew -q gf/${domain}_sqli.txt
-			gf redirect ${domain}_url_extract.txt | anew -q gf/${domain}_redirect.txt && cat gf/${domain}_ssrf.txt | anew -q gf/${domain}_redirect.txt
-			gf rce ${domain}_url_extract.txt | anew -q gf/${domain}_rce.txt
-			gf potential ${domain}_url_extract.txt | cut -d ':' -f3-5 |anew -q gf/${domain}_potential.txt
-			cat ${domain}_url_extract.txt | unfurl -u format %s://%d%p | anew -q gf/${domain}_endpoints.txt
-			gf lfi ${domain}_url_extract.txt | anew -q gf/${domain}_lfi.txt
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n Vulnerable Pattern Search Finished in ${runtime}\n"
-			printf "${bblue} Results are saved in gf folder${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-jschecks(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$JSCHECKS" = true ]
-		then
-			if [ "$DEEP" = true ] ; then
-				printf "${bgreen}#######################################################################\n"
-				printf "${bblue} Javascript Scan ${reset}\n\n"
-				start=`date +%s`
-				printf "${yellow} Running : Fetching Urls 1/5${reset}\n"
-				cat ${domain}_url_extract_js.txt | grep -iE "\.js$" | anew -q ${domain}_jsfile_links.txt;
-				cat ${domain}_url_extract_js.txt | subjs | anew -q ${domain}_jsfile_links.txt;
-				printf "${yellow} Running : Resolving JS Urls 2/5${reset}\n"
-				cat ${domain}_jsfile_links.txt | httpx -follow-host-redirects -H "${HEADER}" -silent -timeout 15 -status-code -no-color | cut -d ' ' -f1 | anew -q ${domain}_js_livelinks.txt
-				printf "${yellow} Running : Gathering endpoints 3/5${reset}\n"
-				interlace -tL ${domain}_js_livelinks.txt -threads 10 -c "python3 $tools/LinkFinder/linkfinder.py -d -i _target_ -o cli >> ${domain}_js_endpoints.txt" &>/dev/null
-				eval sed -i '/^Running against/d; /^Invalid input/d; /^$/d' ${domain}_js_endpoints.txt $DEBUG_ERROR
-				printf "${yellow} Running : Gathering secrets 4/5${reset}\n"
-				cat ${domain}_js_livelinks.txt | nuclei -silent -t ~/nuclei-templates/exposed-tokens/ -o ${domain}_js_secrets.txt
-				printf "${yellow} Running : Building wordlist 5/5${reset}\n"
-				cat ${domain}_js_livelinks.txt | python3 $tools/getjswords.py | anew -q ${domain}_js_Wordlist.txt && touch $called_fn_dir/.${FUNCNAME[0]}
-				end=`date +%s`
-				getElapsedTime $start $end
-				printf "${bblue}\n Javascript Scan Finished in ${runtime}\n"
-				printf "${bblue} Results are saved in ${domain}_js_*.txt files${reset}\n"
-				printf "${bgreen}#######################################################################\n\n"
-			fi
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-params(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$PARAMS" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} Parameter Discovery ${reset}\n"
-			start=`date +%s`
-			printf "${yellow}\n\n Running : Searching params with paramspider${reset}\n"
-			cat ${domain}_probed.txt | sed -r "s/https?:\/\///" | anew -q .tmp/${domain}_probed_nohttp.txt
-			interlace -tL .tmp/${domain}_probed_nohttp.txt -threads 10 -c "python3 $tools/ParamSpider/paramspider.py -d _target_ -l high -q --exclude eot,jpg,jpeg,gif,css,tif,tiff,png,ttf,otf,woff,woff2,ico,pdf,svg,txt,js" &>/dev/null && touch $called_fn_dir/.${FUNCNAME[0]}
-			cat output/*.txt | anew -q .tmp/${domain}_param_tmp.txt
-			sed '/^FUZZ/d' -i .tmp/${domain}_param_tmp.txt
-			eval rm -rf output/ $DEBUG_ERROR
-			if [ "$DEEP" = true ] ; then
-				printf "${yellow}\n\n Running : Checking ${domain} with Arjun${reset}\n"
-				eval arjun -i .tmp/${domain}_param_tmp.txt -t 20 -oT ${domain}_param.txt $DEBUG_STD && touch $called_fn_dir/.${FUNCNAME[0]}
-			else
-				if [[ $(cat .tmp/${domain}_param_tmp.txt | wc -l) -le 50 ]]
-				then
-					printf "${yellow}\n\n Running : Checking ${domain} with Arjun${reset}\n"
-					eval arjun -i .tmp/${domain}_param_tmp.txt -t 20 -oT ${domain}_param.txt $DEBUG_STD && touch $called_fn_dir/.${FUNCNAME[0]}
-				else
-					cp .tmp/${domain}_param_tmp.txt ${domain}_param.txt
-				fi
-			fi
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n Parameter Discovery Finished in ${runtime}\n"
-			printf "${bblue} Results are saved in ${domain}_param.txt${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-xss(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$XSS" = true ]
-	then
-		printf "${bgreen}#######################################################################\n"
-		printf "${bblue} XSS Analysis ${reset}\n\n"
-		start=`date +%s`
-		cat gf/${domain}_xss.txt | qsreplace FUZZ | Gxss -c 100 -p Xss | anew -q .tmp/${domain}_xss_reflected.txt
-		if [ "$DEEP" = true ] ; then
-			if [ -n "$XSS_SERVER" ]; then
-				sed -i "s/^blindPayload = \x27\x27/blindPayload = \x27${XSS_SERVER}\x27/" $tools/XSStrike/core/config.py
-				eval python3 $tools/XSStrike/xsstrike.py --seeds .tmp/${domain}_xss_reflected.txt -t 30 --crawl --blind --skip > ${domain}_xss.txt $DEBUG_STD && touch $called_fn_dir/.${FUNCNAME[0]}
-			else
-				printf "${yellow}\n No XSS_SERVER defined, blind xss skipped\n\n"
-				eval python3 $tools/XSStrike/xsstrike.py --seeds .tmp/${domain}_xss_reflected.txt -t 30 --crawl --skip > ${domain}_xss.txt $DEBUG_STD && touch $called_fn_dir/.${FUNCNAME[0]}
-			fi
-		else
-			if [[ $(cat .tmp/${domain}_xss_reflected.txt | wc -l) -le 200 ]]
-			then
-				if [ -n "$XSS_SERVER" ]; then
-					sed -i "s/^blindPayload = \x27\x27/blindPayload = \x27${XSS_SERVER}\x27/" $tools/XSStrike/core/config.py
-					eval python3 $tools/XSStrike/xsstrike.py --seeds .tmp/${domain}_xss_reflected.txt -t 30 --crawl --blind --skip > ${domain}_xss.txt $DEBUG_STD && touch $called_fn_dir/.${FUNCNAME[0]}
-				else
-					printf "${yellow}\n No XSS_SERVER defined, blind xss skipped\n\n"
-					eval python3 $tools/XSStrike/xsstrike.py --seeds .tmp/${domain}_xss_reflected.txt -t 30 --crawl --skip > ${domain}_xss.txt $DEBUG_STD && touch $called_fn_dir/.${FUNCNAME[0]}
-				fi
-			else
-				printf "${bred} Skipping XSS: Too Much URLs to test, try with --deep flag${reset}\n"
-			fi
-		fi
-		end=`date +%s`
-		getElapsedTime $start $end
-		printf "${bblue}\n XSS Analysis Finished in ${runtime}\n"
-		printf "${bblue} Results are saved in ${domain}_xss.txt${reset}\n"
-		printf "${bgreen}#######################################################################\n\n"
-	else
-		printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-github(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$GITHUB" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} GitHub Scanning ${reset}\n\n"
-			start=`date +%s`
-			if [ -s "${GITHUB_TOKENS}" ]
-			then
-				if [ "$DEEP" = true ] ; then
-					eval python3 $tools/GitDorker/GitDorker.py -tf ${GITHUB_TOKENS} -e 5 -q $domain -p -d $tools/GitDorker/Dorks/alldorksv3 | grep "\[+\]" | anew -q ${domain}_gitrecon.txt $DEBUG_STD
-				else
-					eval python3 $tools/GitDorker/GitDorker.py -tf ${GITHUB_TOKENS} -e 5 -q $domain -p -d $tools/GitDorker/Dorks/medium_dorks.txt | grep "\[+\]" | anew -q ${domain}_gitrecon.txt $DEBUG_STD
-				fi
-				sed -r -i "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" ${domain}_gitrecon.txt
-			else
-				printf "\n${bred} Required file ${GITHUB_TOKENS} not exists or empty${reset}\n"
-			fi
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n GitHub Scanning Finished in ${runtime}\n"
-			printf "${bblue} Results are saved in ${domain}_gitrecon.txt${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-favicon(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$FAVICON" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} FavIcon Hash Extraction ${reset}\n\n"
-			start=`date +%s`
-			cd $tools/fav-up
-			eval shodan init $SHODAN_API_KEY $DEBUG_STD
-			eval python3 favUp.py -w $domain -sc -o favicontest.json $DEBUG_STD
-			if [ -f "favicontest.json" ]
-			then
-				cat favicontest.json | jq > ${domain}_favicontest.txt
-				eval cat ${domain}_favicontest.txt $DEBUG_ERROR | grep found_ips
-				mv favicontest.json $dir/favicontest.json
-			fi
-			cd $dir && touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n FavIcon Hash Extraction Finished in ${runtime}\n"
-			printf "${bblue} Results are saved in ${domain}_favicontest.txt${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-fuzz(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$FUZZ" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} Directory Fuzzing ${reset}\n"
-			printf "${yellow}\n\n Fuzzing subdomains with ${fuzz_wordlist}${reset}\n\n"
-			start=`date +%s`
-			mkdir -p $dir/fuzzing
-			for sub in $(cat ${domain}_probed.txt); do
-				printf "${yellow}\n\n Running: Fuzzing in ${sub}${reset}\n"
-				sub_out=$(echo $sub | sed -e 's|^[^/]*//||' -e 's|/.*$||')
-				ffuf -mc all -fc 404 -ac -sf -s -H "${HEADER}" -w $fuzz_wordlist -maxtime 900 -u $sub/FUZZ -or -o $dir/fuzzing/${sub_out}.tmp &>/dev/null
-				eval cat $dir/fuzzing/${sub_out}.tmp $DEBUG_ERROR | jq '[.results[]|{status: .status, length: .length, url: .url}]' | grep -oP "status\":\s(\d{3})|length\":\s(\d{1,7})|url\":\s\"(http[s]?:\/\/.*?)\"" | paste -d' ' - - - | awk '{print $2" "$4" "$6}' | sed 's/\"//g' | anew -q $dir/fuzzing/${sub_out}.txt
-				eval rm $dir/fuzzing/${sub_out}.tmp $DEBUG_ERROR
-			done
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n Directory Fuzzing Finished in ${runtime}\n"
-			printf "${bblue} Results are saved in fuzzing/*subdomain*.txt${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-cms_scanner(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$CMS_SCANNER" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} CMS Scanner ${reset}\n"
-			start=`date +%s`
-			mkdir -p $dir/cms && rm -rf $dir/cms/*
-			tr '\n' ',' < ${domain}_probed.txt > .tmp/${domain}_cms.txt
-			eval python3 $tools/CMSeeK/cmseek.py -l .tmp/${domain}_cms.txt --batch -r $DEBUG_STD
-			for sub in $(cat ${domain}_probed.txt); do
-				sub_out=$(echo $sub | sed -e 's|^[^/]*//||' -e 's|/.*$||')
-				cms_id=$(cat $tools/CMSeeK/Result/${sub_out}/cms.json | jq -r '.cms_id')
-				if [ -z "$cms_id" ]
-				then
-					rm -rf $tools/CMSeeK/Result/${sub_out}
-				else
-					mv -f $tools/CMSeeK/Result/${sub_out} $dir/cms/
-				fi
-			done
-			#eval rm ${domain}_cms.txt $DEBUG_ERROR
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n CMS Scanner finished in ${runtime}\n"
-			printf "${bblue} Results are saved in cms/*subdomain* folder${reset}\n"
-			printf "${bgreen}#######################################################################\n\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-cors(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$CORS" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} CORS Scan ${reset}\n\n"
-			start=`date +%s`
-			eval python3 $tools/Corsy/corsy.py -i ${domain}_probed.txt > ${domain}_cors.txt $DEBUG_STD
-			eval cat ${domain}_cors.txt $DEBUG_ERROR && touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n CORS Scan Finished in ${runtime}\n"
-			printf "${bblue} Results are saved in ${domain}_cors.txt ${reset}\n"
-			printf "${bgreen}#######################################################################\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-test_ssl(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$TEST_SSL" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} SSL Test ${reset}\n"
-			start=`date +%s`
-			eval cat ${domain}_probed.txt $DEBUG_ERROR | grep "^https" | anew -q .tmp/${domain}_probed_https.txt
-			$tools/testssl.sh/testssl.sh --quiet --color 0 -U -iL .tmp/${domain}_probed_https.txt > ${domain}_testssl.txt && touch $called_fn_dir/.${FUNCNAME[0]}
-			#eval rm ${domain}_probed_https.txt $DEBUG_ERROR
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n SSL Test Finished in ${runtime}\n"
-			printf "${bblue} Results are saved in ${domain}_testssl.txt ${reset}\n"
-			printf "${bgreen}#######################################################################\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-open_redirect(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$OPEN_REDIRECT" = true ]
-		then
-			if [ "$DEEP" = true ] ; then
-				printf "${bgreen}#######################################################################\n"
-				printf "${bblue} Open redirects checks ${reset}\n"
-				start=`date +%s`
-				cat gf/${domain}_redirect.txt | qsreplace FUZZ | anew -q .tmp/tmp_redirect.txt
-				eval python3 $tools/OpenRedireX/openredirex.py -l .tmp/tmp_redirect.txt --keyword FUZZ -p $tools/OpenRedireX/payloads.txt $DEBUG_ERROR | grep "^http" > ${domain}_redirect.txt
-				sed -r -i "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" ${domain}_redirect.txt
-				touch $called_fn_dir/.${FUNCNAME[0]}
-				end=`date +%s`
-				getElapsedTime $start $end
-				printf "${bblue}\n Open Redirects Finished in ${runtime}\n"
-				printf "${bblue} Results are saved in ${domain}_openredirex.txt ${reset}\n"
-				printf "${bgreen}#######################################################################\n"
-			else
-				if [[ $(cat gf/${domain}_redirect.txt | wc -l) -le 1000 ]]
-				then
-					printf "${bgreen}#######################################################################\n"
-					printf "${bblue} Open redirects checks ${reset}\n"
-					start=`date +%s`
-					cat gf/${domain}_redirect.txt | qsreplace FUZZ | anew -q .tmp/tmp_redirect.txt
-					eval python3 $tools/OpenRedireX/openredirex.py -l .tmp/tmp_redirect.txt --keyword FUZZ -p $tools/OpenRedireX/payloads.txt $DEBUG_ERROR | grep "^http" > ${domain}_redirect.txt
-					sed -r -i "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" ${domain}_redirect.txt
-					touch $called_fn_dir/.${FUNCNAME[0]}
-					end=`date +%s`
-					getElapsedTime $start $end
-					printf "${bblue}\n Open Redirects Finished in ${runtime}\n"
-					printf "${bblue} Results are saved in ${domain}_redirect.txt ${reset}\n"
-				else
-					printf "${bred} Skipping Open redirects: Too Much URLs to test, try with --deep flag${reset}\n"
-				fi
-			fi
-			printf "${bgreen}#######################################################################\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-ssrf_checks(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$SSRF_CHECKS" = true ]
-	then
-		printf "${bgreen}#######################################################################\n"
-		printf "${bblue} SSRF checks ${reset}\n"
-		if [ -n "$COLLAB_SERVER" ]; then
-			if [ "$DEEP" = true ] ; then
-				start=`date +%s`
-				cat gf/${domain}_ssrf.txt | qsreplace FUZZ | anew -q .tmp/tmp_ssrf.txt
-				COLLAB_SERVER_FIX=$(echo $COLLAB_SERVER | sed -r "s/https?:\/\///")
-				echo $COLLAB_SERVER_FIX | anew -q .tmp/ssrf_server.txt
-				echo $COLLAB_SERVER | anew -q .tmp/ssrf_server.txt
-				for url in $(cat .tmp/tmp_ssrf.txt); do
-					ffuf -v -H "${HEADER}" -w .tmp/ssrf_server.txt -u $url &>/dev/null | grep "URL" | sed 's/| URL | //' | anew -q ${domain}_ssrf.txt
-				done
-
-				eval python3 $tools/ssrf.py $dir/gf/${domain}_ssrf.txt $COLLAB_SERVER_FIX $DEBUG_ERROR | anew -q ${domain}_ssrf.txt
-
-				touch $called_fn_dir/.${FUNCNAME[0]}
-				end=`date +%s`
-				getElapsedTime $start $end
-				printf "${bblue}\n SSRF Finished in ${runtime}\n"
-				printf "${bblue} Results are saved in ${domain}_ssrf_confirmed.txt ${reset}\n"
-			else
-				if [[ $(cat gf/${domain}_ssrf.txt | wc -l) -le 1000 ]]
-				then
-					start=`date +%s`
-					cat gf/${domain}_ssrf.txt | qsreplace FUZZ | anew -q .tmp/tmp_ssrf.txt
-					COLLAB_SERVER_FIX=$(echo $COLLAB_SERVER | sed -r "s/https?:\/\///")
-					echo $COLLAB_SERVER_FIX | anew -q .tmp/ssrf_server.txt
-					echo $COLLAB_SERVER | anew -q .tmp/ssrf_server.txt
-					for url in $(cat .tmp/tmp_ssrf.txt); do
-						ffuf -v -H "${HEADER}" -w .tmp/ssrf_server.txt -u $url &>/dev/null | grep "URL" | sed 's/| URL | //' | anew -q ${domain}_ssrf.txt
-					done
-					eval python3 $tools/ssrf.py $dir/gf/${domain}_ssrf.txt $COLLAB_SERVER_FIX $DEBUG_ERROR | anew -q ${domain}_ssrf.txt
-					touch $called_fn_dir/.${FUNCNAME[0]}
-					end=`date +%s`
-					getElapsedTime $start $end
-					printf "${bblue}\n SSRF Finished in ${runtime}, check your callback server\n"
-					printf "${bblue} Results are saved in ${domain}_ssrf.txt ${reset}\n"
-				else
-					printf "${bred} Skipping SSRF: Too Much URLs to test, try with --deep flag${reset}\n"
-				fi
-			fi
-		else
-			printf "${bred}\n No COLLAB_SERVER defined\n"
-		fi
-		printf "${bgreen}#######################################################################\n"
-	else
-		printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-crlf_checks(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$CRLF_CHECKS" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} CRLF checks ${reset}\n"
-			start=`date +%s`
-			eval crlfuzz -l ${domain}_probed.txt -o ${domain}_crlf.txt $DEBUG_STD && touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n CRLF Finished in ${runtime}${reset}\n"
-			printf "${bblue} Results are saved in ${domain}_crlf.txt ${reset}\n"
-			printf "${bgreen}#######################################################################\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-lfi(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$LFI" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} LFI checks ${reset}\n"
-			start=`date +%s`
-			cat gf/${domain}_lfi.txt | qsreplace FUZZ | anew -q .tmp/tmp_lfi.txt
-			for url in $(cat .tmp/tmp_lfi.txt); do
-				ffuf -v -mc 200 -H "${HEADER}" -w $lfi_wordlist -u $url -mr "root:" &>/dev/null | grep "URL" | sed 's/| URL | //' | anew -q ${domain}_lfi.txt
-			done
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n LFI Finished in ${runtime}${reset}\n"
-			printf "${bblue} Results are saved in ${domain}_lfi.txt ${reset}\n"
-			printf "${bgreen}#######################################################################\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-ssti(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$SSTI" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} SSTI checks ${reset}\n"
-			start=`date +%s`
-
-			cat gf/${domain}_ssti.txt | qsreplace "ssti{{7*7}}" | anew -q .tmp/ssti_fuzz.txt
-			ffuf -v -mc 200 -H "${HEADER}" -w .tmp/ssti_fuzz.txt -u FUZZ -mr "ssti49" &>/dev/null | grep "URL" | sed 's/| URL | //' | anew -q ${domain}_ssti.txt
-
-			cat gf/${domain}_ssti.txt | qsreplace "{{''.class.mro[2].subclasses()[40]('/etc/passwd').read()}}" | anew -q .tmp/ssti_fuzz2.txt
-			ffuf -v -mc 200 -H "${HEADER}" -w .tmp/ssti_fuzz.txt -u FUZZ -mr "root:" &>/dev/null | grep "URL" | sed 's/| URL | //' | anew -q ${domain}_ssti.txt
-
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n SSTI Finished in ${runtime}${reset}\n"
-			printf "${bblue} Results are saved in ${domain}_ssti.txt ${reset}\n"
-			printf "${bgreen}#######################################################################\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-sqli(){
-	if ([ ! -f "$called_fn_dir/.${FUNCNAME[0]}" ] || [ "$DIFF" = true ]) && [ "$SQLI" = true ]
-		then
-			printf "${bgreen}#######################################################################\n"
-			printf "${bblue} SQLi checks ${reset}\n"
-			start=`date +%s`
-			cat gf/${domain}_sqli.txt | qsreplace FUZZ | anew -q .tmp/tmp_sqli.txt
-			interlace -tL .tmp/tmp_sqli.txt -threads 10 -c "python3 $tools/sqlmap/sqlmap.py -u _target_ -b --batch --disable-coloring --random-agent --output-dir=sqlmap" &>/dev/null
-			touch $called_fn_dir/.${FUNCNAME[0]}
-			end=`date +%s`
-			getElapsedTime $start $end
-			printf "${bblue}\n SQLi Finished in ${runtime}${reset}\n"
-			printf "${bblue} Results are saved in sqlmap folder ${reset}\n"
-			printf "${bgreen}#######################################################################\n"
-		else
-			printf "${yellow} ${FUNCNAME[0]} is already processed, to force executing ${FUNCNAME[0]} delete $called_fn_dir/.${FUNCNAME[0]} ${reset}\n\n"
-	fi
-}
-
-deleteOutScoped(){
-	if [ -z "$1" ]
-	then
-		cat $1 | while read outscoped
-		do
-			if  grep -q  "^[*]" <<< $outscoped
-			then
-				outscoped="${outscoped:1}"
-				sed -i /"$outscoped$"/d  $2
-			else
-			sed -i /$outscoped/d  $2
-			fi
-		done
-	fi
-}
-
-function getElapsedTime {
-	runtime=""
-	local T=$2-$1
-	local D=$((T/60/60/24))
-	local H=$((T/60/60%24))
-	local M=$((T/60%60))
-	local S=$((T%60))
-	(( $D > 0 )) && runtime="$runtime$D days, "
-	(( $H > 0 )) && runtime="$runtime$H hours, "
-	(( $M > 0 )) && runtime="$runtime$M minutes, "
-	runtime="$runtime$S seconds."
-}
-
-function isAsciiText {
-	IS_ASCII="False";
-	if [[ $(file $1 | grep -o 'ASCII text$') == "ASCII text" ]]
-	then
-		IS_ASCII="True";
-	else
-		IS_ASCII="False";
-	fi
-}
-
-end(){
-	find $dir -type f -empty | grep -v "called_fn" | xargs rm -f &>/dev/null
-	find $dir -type d -empty | grep -v "called_fn" | xargs rm -rf &>/dev/null
-
-	if [ "$REMOVETMP" = true ]
-	then
-		rm -rf $dir/.tmp
-	fi
-
-	if [ -n "$dir_output" ]
-	then
-		output
-		finaldir=$dir_output
-	else
-		finaldir=$dir
-	fi
-	global_end=`date +%s`
-	getElapsedTime $global_start $global_end
-	printf "${bgreen}#######################################################################\n"
-	text="${bred} Finished Recon on: ${domain} under ${finaldir} in: ${runtime} ${reset}\n"
-	printf "${text}" && printf "${text}" | $NOTIFY
-	printf "${bgreen}#######################################################################\n"
-	#Seperator for more clear messges in telegram_Bot
-	echo "******  Stay safe 🦠 and secure 🔐  ******" | $NOTIFY
-}
-
-all(){
-	if [ -n "$list" ]
-	then
-		for domain in $(cat $list); do
-			start
-			dorks
-			subdomains_full
-			subtakeover
-			webprobe_full
-			screenshot
-			portscan
-			nuclei_check
-			github
-			favicon
-			cms_scanner
-			fuzz
-			cors
-			params
-			urlchecks
-			wordlist_gen
-			url_gf
-			open_redirect
-			ssrf_checks
-			crlf_checks
-			lfi
-			ssti
-			sqli
-			jschecks
-			xss
-			brokenLinks
-			test_ssl
-			end
-		done
-	else
-		start
-		dorks
-		subdomains_full
-		subtakeover
-		webprobe_full
-		screenshot
-		portscan
-		nuclei_check
-		github
-		favicon
-		cms_scanner
-		fuzz
-		cors
-		params
-		urlchecks
-		wordlist_gen
-		url_gf
-		open_redirect
-		ssrf_checks
-		crlf_checks
-		lfi
-		ssti
-		sqli
-		jschecks
-		xss
-		brokenLinks
-		test_ssl
-		end
-	fi
-}
-
-help(){
-	printf "\n Usage: $0 [-d DOMAIN] [-l list.txt] [-x oos.txt] [-a] [-s]"
-	printf "\n           	      [-w] [-i] [-v] [-h] [--deep] [--fs] [-o OUTPUT]\n\n"
-	printf " ${bblue}TARGET OPTIONS${reset}\n"
-	printf "   -d DOMAIN        Target domain\n"
-	printf "   -l list.txt      Targets list, one per line\n"
-	printf "   -x oos.txt       Exclude subdomains list (Out Of Scope)\n"
-	printf " \n"
-	printf " ${bblue}MODE OPTIONS${reset}\n"
-	printf "   -a               Perform all checks\n"
-	printf "   -s               Full subdomains scan (Subs, tko and probe)\n"
-	printf "   -g               Gentle mode (Dorks, Subs, ports, nuclei, fuzz, cors and ssl)\n"
-	printf "   -w               Perform web checks only without subs ${yellow}(-l required)${reset}\n"
-	printf "   -i               Check all needed tools\n"
-	printf "   -v               Debug/verbose mode, no file descriptor redir\n"
-	printf "   -h               Show this help\n"
-	printf " \n"
-	printf " ${bblue}GENERAL OPTIONS${reset}\n"
-	printf "   --deep           Deep scan (Enable some slow options for deeper scan)\n"
-	printf "   --fs             Full scope (Enable widest scope *domain* options)\n"
-	printf "   -o output/path   Define output folder\n"
-	printf " \n"
-	printf " ${bblue}USAGE EXAMPLES${reset}\n"
-	printf " Full recon:\n"
-	printf " ./reconftw.sh -d example.com -a\n"
-	printf " \n"
-	printf " Subdomain scanning with multiple targets:\n"
-	printf " ./reconftw.sh -l targets.txt -s\n"
-	printf " \n"
-	printf " Web scanning for subdomain list:\n"
-	printf " ./reconftw.sh -d example.com -l targets.txt -w\n"
-	printf " \n"
-	printf " Full recon with custom output and excluded subdomains list:\n"
-	printf " ./reconftw.sh -d example.com -x out.txt -a -o custom/path\n"
-}
-
-output(){
-	mkdir -p $dir_output
-	mv $dir $dir_output
-}
-
-banner
-
-if [ -z "$1" ]
-then
-   help
-   tools_installed
-   exit
+if [[ ! $# -eq 2 ]]; then
+    show_usage
+    exit
 fi
 
-while getopts ":hd:-:l:x:vaisxwgto:" opt; do
-	general=$@
-	if [[ $general == *"-v"* ]]; then
-  		unset DEBUG_STD
-		unset DEBUG_ERROR
-	fi
-	if [[ $general == *"--deep"* ]]; then
-  		DEEP=true
-	fi
-	if [[ $general == *"--fs"* ]]; then
-  		FULLSCOPE=true
-	fi
-	case ${opt} in
-		d ) domain=$OPTARG
-			;;
-		l ) list=$OPTARG
-			;;
-		x ) outOfScope_file=$OPTARG
-			isAsciiText $outOfScope_file
-			if [ "False" = "$IS_ASCII" ]
-			then
-				printf "\n\n${bred} Out of Scope file is not a text file${reset}\n\n"
-				exit
-			fi
-			;;
-		s ) if [ -n "$list" ]
-			then
-				for domain in $(cat $list); do
-					start
-					subdomains_full
-					subtakeover
-					end
-				done
-			else
-				start
-				subdomains_full
-				subtakeover
-				end
-			fi
-			exit
-			;;
-		a ) all
-			exit
-			;;
-		w ) start
-			if [ -n "$list" ]
-			then
-				if [[ "$list" = /* ]]; then
-					cp $list $dir/${domain}_probed.txt
-				else
-					cp $SCRIPTPATH/$list $dir/${domain}_probed.txt
-				fi
-			fi
-			nuclei_check
-			cms_scanner
-			fuzz
-			cors
-			params
-			urlchecks
-			wordlist_gen
-			url_gf
-			open_redirect
-			ssrf_checks
-			crlf_checks
-			lfi
-			ssti
-			sqli
-			jschecks
-			xss
-			brokenLinks
-			test_ssl
-			end
-			exit
-			;;
-		i ) tools_full
-			exit
-			;;
-		g ) start
-			PORTSCAN_ACTIVE=false
-			dorks
-			subdomains_full
-			subtakeover
-			webprobe_full
-			screenshot
-			portscan
-			github
-			favicon
-			cms_scanner
-			cors
-			end
-			exit
-			;;
-		o ) dir_output=$OPTARG
-			output
-			;;
-		\? | h | : | - | * )
-			help
-			;;
-	esac
+# ======== vpn connection check =========
+echo -e $Purple
+read -p " [+] Use VPN or VPS for not getting banned. Are you using any ? (y/n) " -n 1 -r
+echo -e $Default
+echo    # (optional) move to a new line
+if [[ $REPLY =~ ^[nN]$ ]]
+then
+    echo -e $Red "[-]" $Yellow "Sorry i won't let you run without using vpn or vps. If you wan't to run anyway Enter y on next run"
+    exit
+fi
+# ======== vpn connection check done =========
+
+program_name=$1
+action_type=$2
+
+cur_dir=$(pwd)
+
+# ============= Building project structure =============
+mkdir -p $cur_dir/$program_name
+[[  ! -f $cur_dir/$program_name/inscope_patterns.txt ]] && touch $program_name/inscope_patterns.txt
+[[  ! -f $cur_dir/$program_name/outscope_patterns.txt ]] && touch $program_name/outscope_patterns.txt
+
+mkdir -p $cur_dir/$program_name/proj_files
+mkdir -p $cur_dir/$program_name/proj_files/progress
+
+mkdir -p $cur_dir/$program_name/burpsuite_data
+
+mkdir -p $cur_dir/$program_name/notes
+[[ ! -f $cur_dir/$program_name/notes/notes.md ]] && touch $cur_dir/$program_name/notes/notes.md
+[[ ! -f $cur_dir/$program_name/notes/todo.md ]] && touch $cur_dir/$program_name/notes/todo.md
+[[ ! -f $cur_dir/$program_name/notes/caution.md ]] && touch $cur_dir/$program_name/notes/caution.md
+
+mkdir -p $cur_dir/$program_name/recon
+mkdir -p $cur_dir/$program_name/recon/root_domains
+[[  ! -f $cur_dir/$program_name/recon/root_domains/all_root_domains.txt ]] && touch $cur_dir/$program_name/recon/root_domains/all_root_domains.txt
+
+mkdir -p $cur_dir/$program_name/recon/dns_resolvers
+
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/linked_and_js_discovery
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/linked_and_js_discovery/burpsuite
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/amass_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/subfinder_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/github-subdomains_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/sonar_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/tlsscanner_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/sublist3r_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/suip_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/subdomains
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/resolved_subdomains
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/scraping/resolved_subdomains/massdns_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/commonspeak_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/commonspeak_data/resolved_subdomains
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/commonspeak_data/resolved_subdomains/shuffledns_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/commonspeak_data/resolved_subdomains/massdns_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/dnsgen_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/dnsgen_data/subdomains
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/dnsgen_data/resolved_subdomains
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/dnsgen_data/resolved_subdomains/shuffledns_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/dnsgen_data/resolved_subdomains/massdns_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains/massdns_data
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains/hostnames
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains/ipv4_addrs
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains/NXDOMAIN_with_valid_CNAME
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/inscoped_subdomains
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/tools_out
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/tools_out/scraping
+mkdir -p $cur_dir/$program_name/recon/subdomain_enumeration/tools_out/scraping/amass_data
+
+mkdir -p $cur_dir/$program_name/recon/data_scraping
+mkdir -p $cur_dir/$program_name/recon/data_scraping/waybackurls_data
+mkdir -p $cur_dir/$program_name/analysis
+mkdir -p $cur_dir/$program_name/analysis/source_codea2enmod
+mkdir -p $cur_dir/$program_name/analysis/web
+mkdir -p $cur_dir/$program_name/analysis/web/aquatone_data
+mkdir -p $cur_dir/$program_name/analysis/web/HTTP_Traceroute_data
+mkdir -p $cur_dir/$program_name/analysis/web/fuzzing
+mkdir -p $cur_dir/$program_name/analysis/ports
+mkdir -p $cur_dir/$program_name/analysis/ports/httprobe_data
+mkdir -p $cur_dir/$program_name/analysis/ports/masscan_data
+mkdir -p $cur_dir/$program_name/analysis/ports/nmap_data
+
+mkdir -p $cur_dir/$program_name/analysis/tools_out
+mkdir -p $cur_dir/$program_name/analysis/tools_out/ports
+mkdir -p $cur_dir/$program_name/analysis/tools_out/ports/nmap_data
+
+mkdir -p $cur_dir/$program_name/vuln_identification
+mkdir -p $cur_dir/$program_name/vuln_identification/subdomains_takeover
+mkdir -p $cur_dir/$program_name/vuln_identification/subdomains_takeover/subjack_data
+mkdir -p $cur_dir/$program_name/reports/
+mkdir -p $cur_dir/$program_name/reports/assets_overview/
+mkdir -p $cur_dir/$program_name/reports/assets_overview/root_domains
+# ============= Done Building project structure =============
+
+# ============= Check and init ===========
+if [[ ! $action_type == "start" ]] && [[ !$action_type == "resume" ]]; then
+    echo -e $Red " Invalid action !" $Default
+    exit
+fi
+
+if [[ ! -s $cur_dir/$program_name/inscope_patterns.txt ]]; then
+    echo -e $Red "[-]" $Purple "Fill ${cur_dir}/${program_name}/inscope_patterns.txt with regex patterns that matches domains and subdomains in scope." $Default
+    echo -e $Red "[-]" $Purple "If you have everything in scope fill this file with .* " $Default
+    exit
+fi
+
+if [[ ! -s $cur_dir/$program_name/recon/root_domains/all_root_domains.txt ]]; then
+    echo -e $Red "[-]" $Purple "Fill ${cur_dir}/${program_name}/recon/root_domains/all_root_domains.txt with Top Level Domain Names." $Default
+    exit
+fi
+
+all_root_domains_flie="${cur_dir}/${program_name}/recon/root_domains/all_root_domains.txt"
+root_domains_flie=$all_root_domains_flie
+
+if [[ $action_type == "start" ]]; then
+    cat $root_domains_flie | xargs -I{} bash -c "echo 'started' > $cur_dir/$program_name/proj_files/progress/{}"
+elif [[ $action_type == "resume" ]]; then
+    for root_domain in $(cat $root_domains_flie); do
+        [[ ! -f $cur_dir/$program_name/proj_files/progress/$root_domain ]] && echo "started" > $cur_dir/$program_name/proj_files/progress/$root_domain
+    done
+fi
+# ============= Check and init done ===========
+
+
+# ========== recon starts ============
+## ======= generating root domain specific dns-resolvers ========
+function recon_dns_resolvers(){
+    cd $cur_dir/$program_name/recon/dns_resolvers
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Generating dns resolvers specific to ${root_domain} ...." $Default
+    python3 ~/tools/bass/bass.py -d ${root_domain} -o ./${root_domain}
+}
+## ======= generating root domain specific dns-resolvers ends ========
+## ====== subdomain enumerations =======
+### ===== subdomain scraping =======
+function recon_subdomain_enum_linked_js_discovery(){
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/scraping/linked_and_js_discovery
+    echo -e $Yellow "[M]" $Purple "Do Linked and Js discovery with Burp Suite V1 via spidering and fill files in $program_name/recon/subdomain_enumeration/scraping/linked_and_js_discovery/burp_suite/ while this script runs" $Default
+    local root_domain
+    for root_domain in $(cat $root_domains_flie); do
+        [[ ! -f $cur_dir/$program_name/recon/subdomain_enumeration/scraping/linked_and_js_discovery/burpsuite/$root_domain ]] && touch $cur_dir/$program_name/recon/subdomain_enumeration/scraping/linked_and_js_discovery/burpsuite/$root_domain
+    done
+    echo "done"
+}
+function recon_subdomain_enum_scraping_amass(){
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/scraping
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Scraping subdomains with amass (passive) ...." $Default
+
+    #timeout $amass_enum_timeout unbuffer amass enum -d $root_domain -o ./amass_data/${root_domain}_new 2>&1 | tee ../tools_out/scraping/amass_data/$root_domain
+    # TODO not using above as i am dns resolving later with massdns and uses project sonar dns dataset
+    # so --pasive mode is enough
+    unbuffer amass enum -d $root_domain --passive -o ./amass_data/${root_domain}_new 2>&1 >> ../tools_out/scraping/amass_data/$root_domain
+
+    cat ./amass_data/${root_domain}_new >> ./amass_data/${root_domain}
+    rm ./amass_data/${root_domain}_new
+    sort -u -o ./amass_data/${root_domain} ./amass_data/${root_domain}
+
+}
+function recon_subdomain_enum_scraping_subfinder(){
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/scraping
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Scraping subdomains with subfinder ...." $Default
+    subfinder -d $root_domain -silent >> ./subfinder_data/$root_domain
+    sort -u -o ./subfinder_data/$root_domain ./subfinder_data/$root_domain
+}
+function recon_subdomain_enum_scraping_github_subdomains(){
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/scraping
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Scraping subdomains with github-subdomains ...." $Default
+    python ~/tools/github-search/github-subdomains.py -d $root_domain >> ./github-subdomains_data/$root_domain
+    sort -u -o ./github-subdomains_data/$root_domain ./github-subdomains_data/$root_domain
+}
+function recon_subdomain_enum_scraping_sonar(){
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/scraping
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Scraping subdomains from project sonar dataset ...." $Default
+    crobat-client -s $root_domain >> ./sonar_data/$root_domain;
+    curl -s "https://dns.bufferover.run/dns?q=.$root_domain" | jq '.FDNS_A , .RDNS' | grep '"' | sed 's/"//g' | cut -d',' -f2 | sed 's/\*\.//'  >> ./sonar_data/$root_domain
+    sort -u -o ./sonar_data/$root_domain ./sonar_data/$root_domain
+}
+function recon_subdomain_enum_scraping_tlsscanner(){
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/scraping
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Scraping subdomains with tlsscanner ...." $Default
+    curl -s "https://tls.bufferover.run/dns?q=.$root_domain" | jq '.Results' | grep '"' | sed 's/"//g' | cut -d',' -f3 | sed 's/\*\.//'  >> ./tlsscanner_data/$root_domain
+    sort -u -o ./tlsscanner_data/$root_domain ./tlsscanner_data/$root_domain
+}
+function recon_subdomain_enum_scraping_sublist3r(){
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/scraping
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Scraping subdomains with sublist3r ...." $Default
+    python ~/tools/Sublist3r/sublist3r.py -d $root_domain -o ./sublist3r_data/${root_domain}_new >> /tmp/sublist3r_data_log
+    cat ./sublist3r_data/${root_domain}_new >> sublist3r_data/$root_domain
+    rm ./sublist3r_data/${root_domain}_new
+    sort -u -o ./sublist3r_data/$root_domain ./sublist3r_data/$root_domain
+}
+function recon_subdomain_enum_scraping_suip(){
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/scraping
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Scraping subdomains from suip.biz ...." $Default
+    python ~/tools/owned/my-cyber-scripts/sudomains_gathering/subdomains_suip_biz.py -d $root_domain | sed 's/\"//g' >> ./suip_data/$root_domain
+    sort -u -o ./suip_data/$root_domain ./suip_data/$root_domain
+}
+function recon_subdomain_enum_scraping_merge_resolve(){
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/scraping/
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Merging Scraped subdomains ...." $Default
+    cat ./linked_and_js_discovery/burpsuite/$root_domain >> ./subdomains/$root_domain
+    cat ./amass_data/$root_domain >> ./subdomains/$root_domain
+    cat ./subfinder_data/$root_domain >> ./subdomains/$root_domain
+    cat ./github-subdomains_data/$root_domain >> ./subdomains/$root_domain
+    cat ./sonar_data/$root_domain >> ./subdomains/$root_domain
+    cat ./tlsscanner_data/$root_domain >> ./subdomains/$root_domain
+    cat ./sublist3r_data/$root_domain >> ./subdomains/$root_domain
+    cat ./suip_data/$root_domain >> ./subdomains/$root_domain
+    sort -u -o ./subdomains/$root_domain ./subdomains/$root_domain
+
+    echo -e $Green "[+]" $Purple "Resovling Scraped subdomains ...." $Default
+    massdns -r $cur_dir/$program_name/recon/dns_resolvers/${root_domain} -s $massdns_concurrent_lookups_cnt -t A -o J --flush -w ./resolved_subdomains/massdns_data/${root_domain}_out ./subdomains/${root_domain}
+    cat ./resolved_subdomains/massdns_data/${root_domain}_out | jq -crM ' . | select( .data.answers )' > ./resolved_subdomains/massdns_data/${root_domain}
+    # TODO Uncommnet below after checking whether above works good
+    #rm ./resolved_subdomains/massdns_data/${root_domain}
+
+
+    #echo -e $Green "[+]" $Purple "Parsing hostnames ...." $Default
+    #cat ./resolved_subdomains/massdns_data/$root_domain | awk '{print $1}' | sed 's/.$//' | sort -u > ./resolved_subdomains/hostnames/$root_domain
+    #echo -e $Green "[+]" $Purple "Parsing Ipv4 addresses ...." $Default
+    #cat ./resolved_subdomains/massdns_data/$root_domain | awk '{print $3}' | sort -u | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" > ./resolved_subdomains/ipv4_addrs/$root_domain
+    # TODO wildcard elimination (not accurate | removes a lot vaild once, like some same ip uses host header to server differenct content)
+    #cat ./resolved_subdomains/massdns_data/${root_domain}_out | awk '{print $3}' | sort -u | while read part_3; do
+    #    cat ./resolved_subdomains/massdns_data/${root_domain}_out | grep -m $wildcard_elimination_ptr_threshold $part_3 >> ./resolved_subdomains/massdns_data/$root_domain
+    #done
+    #sort -u -o ./resolved_subdomains/massdns_data/${root_domain} ./resolved_subdomains/massdns_data/${root_domain}
+    # Done wildcard elimination
+}
+### ===== SUBDOMAIN SCRAPING ENDS =======
+### ===== SUBDOMAIN BRUTEFORCE =======
+function recon_subdomain_enum_bruteforcing_commonspeak(){
+    local root_domain=$1
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/commonspeak_data
+    echo -e $Green "[+]" $Purple "Bruteforcing subdomains using shuffledns with commonspeak2 subdomain wordlist .... " $Default
+    shuffledns -v -d ${root_domain} -r $cur_dir/$program_name/recon/dns_resolvers/${root_domain} -t $massdns_concurrent_lookups_cnt -o ./resolved_subdomains/shuffledns_data/${root_domain} -w ~/dataSets/wordlists/commonspeak2-wordlists/subdomains/subdomains.txt
+    massdns -r $cur_dir/$program_name/recon/dns_resolvers/${root_domain} -s $massdns_concurrent_lookups_cnt -t A -o J --flush -w ./resolved_subdomains/massdns_data/${root_domain} ./resolved_subdomains/shuffledns_data/${root_domain}
+}
+function recon_subdomain_enum_bruteforcing_dnsgen(){
+    local root_domain=$1
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/dnsgen_data
+    echo -e $Green "[+]" $Purple "Bruteforcing subdomains with dnsgen which generating combinations of already resolved subdomains ...." $Default
+    cat $cur_dir/$program_name/recon/subdomain_enumeration/scraping/resolved_subdomains/massdns_data/${root_domain} \
+        $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/commonspeak_data/resolved_subdomains/massdns_data/${root_domain} \
+        | jq '.name' | sed 's/"//g' \
+        | dnsgen - > ./sudomains/${root_domain}
+
+    shuffledns -d ${root_domain} -r $cur_dir/$program_name/recon/dns_resolvers/${root_domain} \
+               -t $massdns_concurrent_lookups_cnt -o ./resolved_subdomains/shuffledns_data/${root_domain} \
+               -list ./subdomains/${root_domain}
+    massdns -r $cur_dir/$program_name/recon/dns_resolvers/${root_domain} \
+            -s $massdns_concurrent_lookups_cnt -t A -o J --flush \
+            -w ./resolved_subdomains/massdns_data/${root_domain} ./resolved_subdomains/shuffledns_data/${root_domain}
+}
+### ===== SUBDOMAIN BRUTEFORCE ENDS =======
+
+### ====== Merging and filtering all inscoped subdomains ============
+function recon_subdomain_enum_merging_filtering_inscoped_sumdomains(){
+    local root_domain=$1
+
+    cd $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains
+    echo -e $Green "[+]" $Purple "Merging all resolved subdomains ...." $Default
+    cat $cur_dir/$program_name/recon/subdomain_enumeration/scraping/resolved_subdomains/massdns_data/${root_domain} > ./massdns_data/${root_domain}
+    [[ -f $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/commonspeak_data/massdns_data/${root_domain} ]] \
+      && cat $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/commonspeak_data/resolved_subdomains/massdns_data/${root_domain} >> ./massdns_data/${root_domain}
+    [[ -f $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/dnsgen_data/resolved_subdomains/massdns_data/${root_domain} ]] \
+      && cat $cur_dir/$program_name/recon/subdomain_enumeration/bruteforcing/dnsgen_data/resolved_subdomains/massdns_data/${root_domain} >> ./massdns_data/${root_domain}
+    sort -u -o ./massdns_data/${root_domain} ./massdns_data/${root_domain}
+
+    cat ./massdns_data/${root_domain} | jq -crM ' . | select( .status == "NXDOMAIN" ) | select ( .data.answers ) | .name' | sed 's/"//g' | sed 's/.$//' > ./NXDOMAIN_with_valid_CNAME/${root_domain}
+    sort -u -o ./NXDOMAIN_with_valid_CNAME/${root_domain} ./NXDOMAIN_with_valid_CNAME/${root_domain}
+
+    cat ./massdns_data/${root_domain} | jq -crM ' . | select( .status == "NOERROR" ) | select ( .data.answers ) | .name ' | sed 's/"//g' | sed 's/.$//' > ./hostnames/${root_domain}
+    sort -u -o ./hostnames/${root_domain} ./hostnames/${root_domain}
+
+    cat ./massdns_data/${root_domain} | jq -crM ' . | select( .status == "NOERROR" ) | select( .data.answers ) | .data.answers | .[] | select( .type == "A") | .data ' | sed 's/"//g' > ./ipv4_addrs/${root_domain}
+    sort -u -o ./ipv4_addrs/${root_domain} ./ipv4_addrs/${root_domain}
+
+    echo -e $Green "[+]" $Purple "Filtering inscoped subdomains ...." $Default
+    cat ./hostnames/$root_domain | grep -h -f $cur_dir/$program_name/inscope_patterns.txt \
+        | grep -h -v -f $cur_dir/$program_name/outscope_patterns.txt \
+        > $cur_dir/$program_name/recon/subdomain_enumeration/inscoped_subdomains/$root_domain
+    echo ${root_domain} >> $cur_dir/$program_name/recon/subdomain_enumeration/inscoped_subdomains/$root_domain  # as it is removed by inscoped filtering
+    sort -u -o $cur_dir/$program_name/recon/subdomain_enumeration/inscoped_subdomains/$root_domain $cur_dir/$program_name/recon/subdomain_enumeration/inscoped_subdomains/$root_domain
+    echo "done"
+}
+## ====== SUBDOMAIN ENUMERATIONS ENDS =======
+
+## ====== Data scraping ========
+function recon_data_scraping_waybackurls(){
+    root_domain=$1
+    cd $cur_dir/$program_name/recon/data_scraping/waybackurls_data
+    echo -e $Green "[+]" $Purple "Scraping data with waybackurls ...." $Default
+    VT_API_KEY="5aa8430678baabe4a74634fa62143b56bf3441b8a108739b2da3972bbcc5a7c7"
+    # TODO even the domains that was not resolved now may have resolved before and may have data in waybackmachine
+    # Think about it later
+    cat $cur_dir/$program_name/analysis/ports/httprobe_data/$root_domain | waybackurls >> ./$root_domain
+    sort -u -o ./$root_domain ./$root_domain
+}
+## ====== Data scraping ends ========
+# ========== recon ends ============
+
+# ========== analysis ============
+## ========= web analysis =========
+function analysis_reverse_proxy_checks(){
+    root_domain=$1
+    cd $cur_dir/$program_name/analysis/web/HTTP_Traceroute_data
+    echo -e $Green "[+]" $Purple "Performing Reverse proxy checks with HTTP_Traceroute.py ...." $Default
+    mkdir -p ./$root_domain
+    cat $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains/hostnames/$root_domain | xargs -I{} --max-procs=$analysis_reverse_proxy_checks_max_procs bash -c "
+        [[ -f ./${root_domain}/{} ]] && rm ./${root_domain}/{}
+        python2 ~/tools/owned/my-cyber-scripts/networks/HTTP_Traceroute/HTTP-Traceroute.py -t {} -s https -p 443 >> ./${root_domain}/{}
+        python2 ~/tools/owned/my-cyber-scripts/networks/HTTP_Traceroute/HTTP-Traceroute.py -t {} -s http -p 80 >> ./${root_domain}/{}
+        "
+    wait
+    # you need to perform on both port 443, and 80
+    # TODO not sure whether to perform on other ports and schemes
+}
+function analysis_web_aquatone(){
+    root_domain=$1
+    cd $cur_dir/$program_name/analysis/web/aquatone_data
+    echo -e $Green "[+]" $Purple "Performing website scan with acquatone ...." $Default
+    mkdir -p ./$root_domain
+    # httprobe_data/$root_domain contians urls of alive host with 80 or 443 open
+    cat $cur_dir/$program_name/analysis/ports/httprobe_data/$root_domain | aquatone -chrome-path $chromium_path -out ./$root_domain -threads $aquatone_threads -http-timeout $aquatone_http_timeout -scan-timeout $aquatone_scan_timeout -screenshot-timeout $aquatone_screenshot_timeout -silent
+}
+## ========= web analysis ends =========
+## ========= port analysis =========
+function analysis_ports_httprobe(){
+    root_domain=$1
+    cd $cur_dir/$program_name/analysis/ports/httprobe_data
+    echo -e $Green "[+]" $Purple "Probing http ports(80,443) with httprobe ...." $Default
+    cat $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains/hostnames/$root_domain | sort -u | httprobe -c $httprobe_concurrency_level -t $httprobe_timeout >> ./$root_domain
+}
+function analysis_ports_masscan(){
+    # TODO i don't know why its not giving all the results , need to work on it later
+    cd $cur_dir/$program_name/analysis/ports/masscan_data
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Performing Port analysis with masscan ...." $Default
+    sudo masscan -iL $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains/ipv4_addrs/$root_domain --rate $masscan_rate -p1-65535 -oL $root_domain
+    # TODO need to effective use resume feature of masscan
+}
+function analysis_ports_nmap(){
+    cd $cur_dir/$program_name/analysis/ports/nmap_data
+    local root_domain=$1
+
+    echo -e $Green "[+]" $Purple "Performing Port analysis with nmap ...." $Default
+    local ip_addr
+    for ip_addr in $(cat $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains/ipv4_addrs/${root_domain} ); do
+        echo -e $Purple "[+]" $Yellow "Scanning $ip_addr ...." $Default
+        if [[ "$action_type" == "resume" ]] && [[ -f ./$ip_addr ]]; then
+            if grep -Fq "Nmap done" $ip_addr ;then
+                #echo -e $Green "[+]" $Cyan "showing results of $ip_addr from previous scan ...." $Default
+                #cat ./$ip_addr
+                continue
+            fi
+        fi
+        #sudo nmap -O -Pn -sTUV --top-ports 1000 -oN ./$ip_addr $ip_addr
+        nmap --top-ports 1000 -sV -T3 -Pn -oN ./$ip_addr $ip_addr >> $cur_dir/$program_name/analysis/tools_out/ports/nmap_data/${root_domain}
+    done
+    #echo -e $Green "[+]" $Cyan "Unique port among the subdomains of $root_domain" $Default
+    #cat ../*/* | grep -E "open|closed|filtered|unfiltered" | grep -v "ports" | awk '{print $1,$2,$3}' | sort -n | uniq -c
+    #cat ./* | grep -E "open|closed|filtered|unfiltered" | grep -v "ports" | awk '{print $1,$2,$3}' | sort -n | uniq -c
+}
+## ========= port analysis ends =========
+# ========== analysis done============
+
+# ========== vulnerability identification ============
+## ========= Subdomains takeover check =======
+function vuln_identification_subdomain_takeover_subjack(){
+    cd $cur_dir/$program_name/vuln_identification/subdomains_takeover
+    local root_domain=$1
+    echo -e $Green "[+]" $Purple "Checking subdomain takeover vulnerability with subjack .... " $Default
+    subjack -a -ssl -t $subjack_threads -v -timeout $subjack_timeout -w $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains/hostnames/$root_domain -o ./subjack_data/${root_domain}.tmp > /tmp/subjack_data.log
+    #echo -e $Purple "[+]" $Cyan "${root_domain}'s subdomains than can probably takeover :" $Default
+    cat ./subjack_data/${root_domain}.tmp | grep -v "Not Vulnerable" | tee -a ./subjack_data/$root_domain
+    subjack -a -ssl -t $subjack_threads -v -timeout $subjack_timeout -w $cur_dir/$program_name/recon/subdomain_enumeration/resolved_subdomains/NXDOMAIN_with_valid_CNAME/$root_domain -o ./subjack_data/${root_domain}.tmp >> /tmp/subjack_data.log
+    cat ./subjack_data/${root_domain}.tmp | grep -v "Not Vulnerable" | tee -a ./subjack_data/$root_domain
+    rm ./subjack_data/${root_domain}.tmp
+    sort -u -o ./subjack_data/${root_domain} ./subjack_data/${root_domain}
+}
+## ========= Subdomains takeover check done =======
+# ========== vulnerability identification done ============
+
+# =========== Reports ===========
+## =========== Reports of assets overview===============
+function reports_assets_overview_subdomain(){
+    cd "${cur_dir}/${program_name}/reports/assets_overview/root_domains/${1}"
+    local sub_domain=$2
+    echo -e $Green "[+]" $Yellow "Generating report for ${sub_domain} .... " $Default
+
+    local subdomain_name_pattern=$(echo "$sub_domain" | sed 's/\./_/g')
+    local http_screenshot_path=$(find "${cur_dir}/${program_name}/analysis/web/aquatone_data/${root_domain}/screenshots/" | awk /http__${subdomain_name_pattern}__.*/ )
+    local https_screenshot_path=$(find "${cur_dir}/${program_name}/analysis/web/aquatone_data/${root_domain}/screenshots/" | awk /https__${subdomain_name_pattern}__.*/ )
+    local http_response_headers_path=$(find "${cur_dir}/${program_name}/analysis/web/aquatone_data/${root_domain}/headers/" | awk /http__${subdomain_name_pattern}__.*/ )
+    local https_response_headers_path=$(find "${cur_dir}/${program_name}/analysis/web/aquatone_data/${root_domain}/headers/" | awk /https__${subdomain_name_pattern}__.*/ )
+    [[ -f ./${sub_domain}.html ]] && rm ./${sub_domain}.html
+    echo "
+        <html>
+        <meta http-equiv='Content-Type' content='text/html; charset=UTF-8'>
+        <meta http-equiv='X-UA-Compatible' content='IE=edge'>
+        <head>
+            <title>assets overview of ${sub_domain}</title>
+            <style>
+                .status.fourhundred{color:#00a0fc}
+                .status.redirect{color:#d0b200}
+                .status.fivehundred{color:#DD4A68}
+                .status.jackpot{color:#0dee00}
+                .status.weird{color:#cc00fc}
+                img{padding:2px;width:600px}
+                img:hover{box-shadow:0 0 2px 1px rgba(0,140,186,.5)}
+                pre{font-family:Inconsolata,monospace}
+                pre{margin:0 0 20px}
+                pre{overflow-x:auto}
+                article,header,img{display:block}
+                #wrapper:after,.blog-description:after,.clearfix:after{content:}
+                .container{position:relative}
+                html{line-height:1.15;-ms-text-size-adjust:100%;-webkit-text-size-adjust:100%}
+                h1{margin:.67em 0}
+                h1,h2{margin-bottom:20px}
+                a{background-color:transparent;-webkit-text-decoration-skip:objects;text-decoration:none}
+                .container,table{width:100%}
+                .site-header{overflow:auto}
+                .post-header,.post-title,.site-header,.site-title,h1,h2{text-transform:uppercase}
+                p{line-height:1.5em}
+                pre,table td{padding:10px}
+                h2{padding-top:40px;font-weight:900}
+                a{color:#00a0fc}
+                body,html{height:100%}
+                body{margin:0;background:#fefefe;color:#424242;font-family:Raleway,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,'Helvetica Neue',Arial,sans-serif;font-size:24px}
+                h1{font-size:35px}
+                h2{font-size:28px}
+                p{margin:0 0 30px}
+                pre{background:#f1f0ea;border:1px solid #dddbcc;border-radius:3px;font-size:16px}
+                .row{display:flex}
+                .column{flex:100%}
+                table tbody>tr:nth-child(odd)>td,table tbody>tr:nth-child(odd)>th{background-color:#f7f7f3}
+                table th{padding:0 10px 10px;text-align:left}
+                .post-header,.post-title,.site-header{text-align:center}
+                table tr{border-bottom:1px dotted #aeadad}
+                ::selection{background:#fff5b8;color:#000;display:block}
+                ::-moz-selection{background:#fff5b8;color:#000;display:block}
+                .clearfix:after{display:table;clear:both}
+                .container{max-width:100%}
+                #wrapper{height:auto;min-height:100%;margin-bottom:-265px}
+                #wrapper:after{display:block;height:265px}
+                .site-header{padding:40px 0 0}
+                .site-title{float:left;font-size:14px;font-weight:600;margin:0}
+                .site-title a{float:left;background:#00a0fc;color:#fefefe;padding:5px 10px 6px}
+                .post-container-left{width:49%;float:left;margin:auto}
+                .post-container-right{width:49%;float:right;margin:auto}
+                .post-header{border-bottom:1px solid #333;margin:0 0 50px;padding:0}
+                .post-title{font-size:55px;font-weight:900;margin:15px 0}
+                .blog-description{color:#aeadad;font-size:14px;font-weight:600;line-height:1;margin:25px 0 0;text-align:center}
+                .single-post-container{margin-top:50px;padding-left:15px;padding-right:15px;box-sizing:border-box}
+                body.dark{background-color:#1e2227;color:#fff}
+                body.dark pre{background:#282c34}
+                body.dark table tbody>tr:nth-child(odd)>td,body.dark table tbody>tr:nth-child(odd)>th{background:#282c34}
+                table tbody>tr:nth-child(even)>th{background:#1e2227}
+                input{font-family:Inconsolata,monospace}
+                body.dark .status.redirect{color:#ecdb54}
+                body.dark input{border:1px solid ;border-radius: 3px; background:#282c34;color: white}
+                body.dark label{color:#f1f0ea}
+                body.dark pre{color:#fff}
+            </style>
+            <script>
+            document.addEventListener('DOMContentLoaded', (event) => {
+              ((localStorage.getItem('mode') || 'dark') === 'dark') ? document.querySelector('body').classList.add('dark') : document.querySelector('body').classList.remove('dark')
+            })
+            </script>
+
+            <link rel='stylesheet' type='text/css' href='https://cdnjs.cloudflare.com/ajax/libs/material-design-lite/1.1.0/material.min.css'>
+            <link rel='stylesheet' type='text/css' href='https://cdn.datatables.net/1.10.19/css/dataTables.material.min.css'>
+            <script type='text/javascript' src='https://code.jquery.com/jquery-3.3.1.js'></script>
+            <script type='text/javascript' charset='utf8' src='https://cdn.datatables.net/1.10.19/js/jquery.dataTables.js'></script>
+            <script type='text/javascript' charset='utf8' src='https://cdn.datatables.net/1.10.19/js/dataTables.material.min.js'></script>
+            <script>
+                \$(document).ready( function () {
+                    \$('#myTable').DataTable({
+                        'paging':   true,
+                        'ordering': true,
+                        'info':     true,
+                         'autoWidth': true,
+                            'columns': [{ 'width': '5%' },{ 'width': '5%' },null],
+                                'lengthMenu': [[10, 25, 50,100, -1], [10, 25, 50,100, 'All']],
+
+                    });
+                });
+            </script>
+        </head>
+        <body class='dark'>
+            <header class='site-header'>
+                <div class='site-title'>
+                    <p>
+                        <a style='cursor: pointer' onclick='localStorage.setItem('mode', (localStorage.getItem('mode') || 'dark') === 'dark' ? 'bright' : 'dark'); localStorage.getItem('mode') === 'dark' ? document.querySelector('body').classList.add('dark') : document.querySelector('body').classList.remove('dark')\' title=\'Switch to light or dark theme\'>🌓 Light|dark mode</a>
+                    </p>
+                </div>
+            </header>
+            <div id='wrapper'>
+                <div id='container'>
+                    <h1 class='post-title' itemprop='name headline'>
+                        Assets overivew report for <a href='http://${sub_domain}' target='_blank'>${sub_domain}</a>
+                    </h1>
+                    <p class='blog-description'>
+                        Generated by mr_sec_recon on $(date)
+                    </p>
+                    <div class='container single-post-container'>
+                        <article class='post-container-left' itemscope='' itemtype='http://schema.org/BlogPosting'>
+                            <header class='post-header'>
+                            </header>
+                            <div class='post-content clearfix' itemprop='articleBody'>
+                                <h2>Content Discovery</h2>
+                                <table id='myTable' class='stripe'>
+                                    <thead>
+                                        <tr>
+                                            <th>Status Code</th>
+                                            <th>Content-Length</th>
+                                            <th>Url</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Need to add content after fuzzing -->
+                                    <tbody>
+                                </table>
+                            </div>
+                        </article>
+                        <article class='post-container-right' itemscope='' itemtype='http://schema.org/BlogPosting'>
+                            <header class='post-header'>
+                            </header>
+                            <div class='post-content clearfix' itemprop='articleBody'>
+                                <h2>Screenshots</h2>
+                                <pre style='max-height: 400px;overflow-y: scroll'>
+                                    <div class='row'>
+                                        <div class='column'>
+                                            <span style='width: 100%;text-align: center; font-weight:bold'>
+                                                Port 80
+                                            </span>
+                                            <a href='${http_screenshot_path}' target='_blank'>
+                                                <img/src='${http_screenshot_path}'>
+                                            </a>
+                                        </div>
+                                        <div class='column'>
+                                            <span style='width: 100%;text-align: center; font-weight:bold'>
+                                                Port 443
+                                            </span>
+                                            <a href='${https_screenshot_path}' target='_blank'>
+                                                <img/src='${https_screenshot_path}'>
+                                            </a>
+                                        </div>
+                                    </div>
+                                </pre>
+
+                                <h2>Response Headers</h2>
+                                <pre style='max-height: 400px;overflow-y: scroll'>
+                                    <div class='row'>
+                                        <div class='column'>
+                                            <span style='width: 100%;text-align: center; font-weight:bold'>
+                                                Port 80
+                                            </span>
+                                            <pre>
+                                            $([[ -f $http_response_headers_path ]] && cat $http_response_headers_path)
+                                            <pre>
+                                        </div>
+                                        <div class='column'>
+                                            <span style='width: 100%;text-align: center; font-weight:bold'>
+                                                Port 443
+                                            </span>
+                                            <pre>
+                                            $([[ -f $https_response_headers_path ]] && cat $https_response_headers_path)
+                                            <pre>
+                                        </div>
+                                    </div>
+                                </pre>
+
+                                <h2>Dig Info</h2>
+                                <pre style='max-height: 400px;overflow-y: scroll'>
+                                    $(dig $sub_domain)
+                                </pre>
+
+                                <h2>Nmap Results</h2>
+                                <pre style='max-height: 400px;overflow-y: scroll'>
+                                " >> ./${sub_domain}.html
+
+# TODO you can even get ip address from massdns_data
+# i am still using this to verify if massdns misses any
+    for ip_addr in  $(dig +noall +answer $sub_domain | awk '{print $5}' | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b"); do
+        echo -e "=======================================" >> ./${sub_domain}.html
+        echo -e "             $ip_addr                  " >> ./${sub_domain}.html
+        echo -e "=======================================" >> ./${sub_domain}.html
+        if [[ -f $cur_dir/$program_name/analysis/ports/nmap_data/$ip_addr ]]; then
+            cat $cur_dir/$program_name/analysis/ports/nmap_data/$ip_addr >> ./${sub_domain}.html
+        else
+            echo -e "[-] Haven't scan it yet" >> ./${sub_domain}.html
+        fi
+        echo " " >> ./${sub_domain}.html
+    done
+    echo "                      </pre>
+                            </div>
+                        </article>
+                    </div>
+                </div>
+            </div>
+        </html>" >> ./${sub_domain}.html
+}
+
+function reports_assets_overview(){
+
+    local root_domain=$1
+    cd $cur_dir/$program_name/reports/assets_overview/root_domains
+    mkdir -p $root_domain
+    cd ./$root_domain
+    echo -e $Green "[+]" $Purple "Generating reports on overivew of assets for visualisation .... " $Default
+    for sub_domain_name in $(cat $cur_dir/$program_name/analysis/ports/httprobe_data/$root_domain | sed 's/http:\/\///g' |  sed 's/https:\/\///g' | sort -u) ; do
+        reports_assets_overview_subdomain $root_domain $sub_domain_name &
+        # allow only to execute $N jobs in parallel
+        if [[ $(jobs -r -p | wc -l) -gt $reports_assets_overview_max_procs ]]; then
+            # wait only for first job
+            wait -n
+        fi
+    done
+    # wait for pending jobs
+    wait
+    [[ -f ./${root_domain}_master.html ]] && rm ./${root_domain}_master.html
+    echo "
+        <html>
+        <head>
+            <meta http-equiv='Content-Type' content='text/html; charset=UTF-8'>
+            <meta http-equiv='X-UA-Compatible' content='IE=edge'>
+            <title>Recon Report for ${root_domain}</title>
+            <style>
+                .status.redirect{color:#d0b200}
+                .status.fivehundred{color:#DD4A68}
+                .status.jackpot{color:#0dee00}
+                img{padding:5px;width:360px}
+                img:hover{box-shadow:0 0 2px 1px rgba(0,140,186,.5)}
+                pre{font-family:Inconsolata,monospace}
+                pre{margin:0 0 20px}
+                pre{overflow-x:auto}
+                article,header,img{display:block}
+                #wrapper:after,.blog-description:after,.clearfix:after{content:}
+                .container{position:relative}
+                html{line-height:1.15;-ms-text-size-adjust:100%;-webkit-text-size-adjust:100%}
+                h1{margin:.67em 0}
+                h1,h2{margin-bottom:20px}
+                a{background-color:transparent;-webkit-text-decoration-skip:objects;text-decoration:none}
+                .container,table{width:100%}
+                .site-header{overflow:auto}
+                .post-header,.post-title,.site-header,.site-title,h1,h2{text-transform:uppercase}
+                p{line-height:1.5em}
+                pre,table td{padding:10px}
+                h2{padding-top:40px;font-weight:900}
+                a{color:#00a0fc}
+                body,html{height:100%}
+                body{margin:0;background:#fefefe;color:#424242;font-family:Raleway,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,'Helvetica Neue',Arial,sans-serif;font-size:24px}
+                h1{font-size:35px}
+                h2{font-size:28px}
+                p{margin:0 0 30px}
+                pre{background:#f1f0ea;border:1px solid #dddbcc;border-radius:3px;font-size:16px}
+                .row{display:flex}
+                .column{flex:100%}
+                table tbody>tr:nth-child(odd)>td,table tbody>tr:nth-child(odd)>th{background-color:#f7f7f3}
+                table th{padding:0 10px 10px;text-align:left}
+                .post-header,.post-title,.site-header{text-align:center}
+                table tr{border-bottom:1px dotted #aeadad}
+                ::selection{background:#fff5b8;color:#000;display:block}
+                ::-moz-selection{background:#fff5b8;color:#000;display:block}
+                .clearfix:after{display:table;clear:both}
+                .container{max-width:100%}
+                #wrapper{height:auto;min-height:100%;margin-bottom:-265px}
+                #wrapper:after{display:block;height:265px}
+                .site-header{padding:40px 0 0}
+                .site-title{float:left;font-size:14px;font-weight:600;margin:0}
+                .site-title a{float:left;background:#00a0fc;color:#fefefe;padding:5px 10px 6px}
+                .post-container-left{width:49%;float:left;margin:auto}
+                .post-container-right{width:49%;float:right;margin:auto}
+                .post-header{border-bottom:1px solid #333;margin:0 0 50px;padding:0}
+                .post-title{font-size:55px;font-weight:900;margin:15px 0}
+                .blog-description{color:#aeadad;font-size:14px;font-weight:600;line-height:1;margin:25px 0 0;text-align:center}
+                .single-post-container{margin-top:50px;padding-left:15px;padding-right:15px;box-sizing:border-box}
+                body.dark{background-color:#1e2227;color:#fff}
+                body.dark pre{background:#282c34}
+                body.dark table tbody>tr:nth-child(odd)>td,body.dark table tbody>tr:nth-child(odd)>th{background:#282c34}
+                input{font-family:Inconsolata,monospace}
+                body.dark .status.redirect{color:#ecdb54}
+                body.dark input{border:1px solid ;border-radius: 3px; background:#282c34;color: white}
+                body.dark label{color:#f1f0ea}
+                body.dark pre{color:#fff}
+            </style>
+            <script>
+                document.addEventListener('DOMContentLoaded', (event) => {
+                  ((localStorage.getItem('mode') || 'dark') === 'dark') ? document.querySelector('body').classList.add('dark') : document.querySelector('body').classList.remove('dark')
+                })
+            </script>
+
+            <link rel='stylesheet' type='text/css' href='https://cdnjs.cloudflare.com/ajax/libs/material-design-lite/1.1.0/material.min.css'>
+            <link rel='stylesheet' type='text/css' href='https://cdn.datatables.net/1.10.19/css/dataTables.material.min.css'>
+            <script type='text/javascript' src='https://code.jquery.com/jquery-3.3.1.js'></script>
+            <script type='text/javascript' charset='utf8' src='https://cdn.datatables.net/1.10.19/js/jquery.dataTables.js'></script>
+            <script type='text/javascript' charset='utf8' src='https://cdn.datatables.net/1.10.19/js/dataTables.material.min.js'></script>
+            <script>
+                \$(document).ready( function () {
+                    \$('#myTable').DataTable({
+                        'paging':   true,
+                        'ordering': true,
+                        'info':     true,
+                         'autoWidth': true,
+                            'columns': [{ 'width': '5%' },{ 'width': '5%' },null],
+                                'lengthMenu': [[10, 25, 50,100, -1], [10, 25, 50,100, 'All']],
+
+                    });
+                });
+            </script>
+        </head>
+
+        <body class='dark'>
+            <header class='site-header'>
+                <div class='site-title'>
+                    <p>
+                        <a style='cursor: pointer' onclick='localStorage.setItem('mode', (localStorage.getItem('mode') || 'dark') === 'dark' ? 'bright' : 'dark'); localStorage.getItem('mode') === 'dark' ? document.querySelector('body').classList.add('dark') : document.querySelector('body').classList.remove('dark')\' title=\'Switch to light or dark theme\'>🌓 Light|dark mode</a>
+                    </p>
+                </div>
+            </header>
+
+            <div id='wrapper'>
+                <div id='container'>
+                    <h1 class='post-title' itemprop='name headline'>
+                        Assets overivew report for <a href='http://${root_domain}' target='_blank'>${root_domain}</a>
+                    </h1>
+                    <p class='blog-description'>
+                        Generated by mr_sec_recon on $(date)
+                    </p>
+                    <div class='container single-post-container'>
+                        <article class='post-container-left' itemscope='' itemtype='http://schema.org/BlogPosting'>
+                            <header class='post-header'>
+                            </header>
+                            <div class='post-content clearfix' itemprop='articleBody'>
+                                <h2>Total Scanned Subdomains</h2>
+                                <table id='myTable' class='stripe'>
+                                    <thead>
+                                        <tr>
+                                            <th>Subdomains</th>
+                                           <!-- <th>Scanned Urls</th> -->
+                                        </tr>
+                                    </thead>
+                                    <tbody> " >> ./${root_domain}_master.html
+
+    for sub_domain_name in $( cat "${cur_dir}/${program_name}/analysis/ports/httprobe_data/${root_domain}" |  sed 's/\http\:\/\///g' |  sed 's/\https\:\/\///g' | sort -u ) ; do
+        echo "                          <tr>
+                                            <td><a href='${cur_dir}/${program_name}/reports/assets_overview/root_domains/${root_domain}/${sub_domain_name}.html' target='_blank'>${sub_domain_name}</a></td>
+                                        <tr>
+        " >> ./${root_domain}_master.html
+    done
+
+    echo "                           <tbody>
+                                </table>
+                                <div>
+                                    <h2>Possible Subdomains Takeovers of ${root_domain}</h2></div>
+                                    <pre>
+                                        $(cat ${cur_dir}/${program_name}/vuln_identification/subdomains_takeover/subjack_data/${root_domain})
+                                    </pre>
+
+                                    <div>
+                                        <h2>Wayback data</h2>
+                                    </div>
+                                    <table>
+                                        <tbody>
+    " >> ./${root_domain}_master.html
+
+    [[ -f ${cur_dir}/${program_name}/recon/data_scraping/waybackurls_data/${root_domain} ]] && echo "
+                                            <tr>
+                                                <td><a href='${cur_dir}/${program_name}/recon/data_scraping/waybackurls_data/${root_domain}' target='_blank'>All Urls</a></td>
+                                            </tr>
+    " >> ./${root_domain}_master.html
+    echo "
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </article>
+                        <article class='post-container-right' itemscope='' itemtype='http://schema.org/BlogPosting'>
+                            <header class='post-header'>
+                            </header>
+                            <div class='post-content clearfix' itemprop='articleBody'>
+                                <h2><a href='${cur_dir}/${program_name}/analysis/web/aquatone_data/${root_domain}/aquatone_report.html' target='_blank'>View Aquatone Report</a> </h2>
+                            </div>
+                        </article>
+                    </div>
+                </div>
+            </div>
+        </body>
+    " >> ./${root_domain}_master.html
+}
+## =========== Reports of assets overview ends===============
+# =========== Reports ends ===========
+
+# ============  Controlling the flow of execution ==========
+for root_domain_name in $(cat $root_domains_flie); do
+    echo ""
+    echo -e $Green "[+]" $Cyan "$root_domain_name processing started ..! " $Default
+    case "$(cat $cur_dir/$program_name/proj_files/progress/$root_domain_name)" in
+        "started")
+            echo "started" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            ;&
+        "recon_dns_resolvers")
+            echo "recon_dns_resolvers" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_dns_resolvers $root_domain_name
+            ;&
+        "recon_subdomain_enum_linked_js_discovery")
+            echo "recon_subdomain_enum_linked_js_discovery" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_subdomain_enum_linked_js_discovery $root_domain_name
+            ;&
+        "recon_subdomain_enum_scraping_amass")
+            echo "recon_subdomain_enum_scraping_amass" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_subdomain_enum_scraping_amass $root_domain_name
+            ;&
+        "recon_subdomain_enum_scraping_subfinder")
+            echo "recon_subdomain_enum_scraping_subfinder" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_subdomain_enum_scraping_subfinder $root_domain_name
+            ;&
+        "recon_subdomain_enum_scraping_github_subdomains")
+            echo "recon_subdomain_enum_scraping_github_subdomains" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_subdomain_enum_scraping_github_subdomains $root_domain_name
+            ;&
+        "recon_subdomain_enum_scraping_sonar")
+            echo "recon_subdomain_enum_scraping_sonar" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_subdomain_enum_scraping_sonar $root_domain_name
+            ;&
+        "recon_subdomain_enum_scraping_tlsscanner")
+            echo "recon_subdomain_enum_scraping_tlsscanner" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_subdomain_enum_scraping_tlsscanner $root_domain_name
+            ;&
+        "recon_subdomain_enum_scraping_sublist3r")
+            echo "recon_subdomain_enum_scraping_sublist3r" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_subdomain_enum_scraping_sublist3r $root_domain_name
+            ;&
+        "recon_subdomain_enum_scraping_suip")
+            echo "recon_subdomain_enum_scraping_suip" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_subdomain_enum_scraping_suip $root_domain_name
+            ;&
+        "recon_subdomain_enum_scraping_merge_resolve")
+            echo "recon_subdomain_enum_scraping_merge_resolve" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_subdomain_enum_scraping_merge_resolve $root_domain_name
+            ;&
+        "recon_subdomain_enum_bruteforcing_commonspeak")
+            echo "recon_subdomain_enum_bruteforcing_commonspeak" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            #recon_subdomain_enum_bruteforcing_commonspeak $root_domain_name
+            ;&
+        "recon_subdomain_enum_bruteforcing_dnsgen")
+            echo "recon_subdomain_enum_bruteforcing_dnsgen" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            #recon_subdomain_enum_bruteforcing_dnsgen $root_domain_name
+            ;&
+        "recon_subdomain_enum_merging_filtering_inscoped_sumdomains")
+            echo "recon_subdomain_enum_merging_filtering_inscoped_sumdomains" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_subdomain_enum_merging_filtering_inscoped_sumdomains $root_domain_name
+            ;&
+        "vuln_identification_subdomain_takeover_subjack")
+            echo "vuln_identification_subdomain_takeover_subjack" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            vuln_identification_subdomain_takeover_subjack $root_domain_name
+            ;&
+        "analysis_ports_httprobe")
+            echo "analysis_ports_httprobe" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            analysis_ports_httprobe $root_domain_name
+            ;&
+        "analysis_reverse_proxy_checks")
+            echo "analysis_reverse_proxy_checks" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            analysis_reverse_proxy_checks $root_domain_name
+            ;&
+        "analysis_web_aquatone")
+            echo "analysis_web_aquatone" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            analysis_web_aquatone $root_domain_name
+            ;&
+        "recon_data_scraping_waybackurls")
+            echo "recon_data_scraping_waybackurls" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            recon_data_scraping_waybackurls $root_domain_name
+            ;&
+        "analysis_ports_masscan")
+            echo "analysis_ports_masscan" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            #analysis_ports_masscan $root_domain_name
+            ;&
+        "analysis_ports_nmap")
+            echo "analysis_ports_nmap" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            #analysis_ports_nmap $root_domain_name
+            ;&
+        "reports_assets_overview")
+            echo "reports_assets_overview" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            reports_assets_overview $root_domain_name
+            ;&
+        "finished")
+            echo "finished" > $cur_dir/$program_name/proj_files/progress/$root_domain_name
+            echo -e $Green "[+]" $Cyan "$root_domain_name processing finished ..! "
+            ;;
+    esac
+
 done
-shift $((OPTIND -1))
+# ============  Controlling the flow of execution ==========
+
+
+# =========== Master report generation ===========
+
+echo -e $Green "[+]" $Yellow "Generating Master Assets Overview Report for ${program_name} .... " $Default
+cd ${cur_dir}/${program_name}/reports/assets_overview/
+assets_overview_master_report_path="${cur_dir}/${program_name}/reports/assets_overview/assets_overview_master_report.html"
+[[ -f $assets_overview_master_report_path ]] && rm $assets_overview_master_report_path
+
+echo "
+    <html>
+    <head>
+        <meta http-equiv='Content-Type' content='text/html; charset=UTF-8'>
+        <meta http-equiv='X-UA-Compatible' content='IE=edge'>
+        <title>Assets Overview report of ${program_name}</title>
+        <style>
+            .status.redirect{color:#d0b200}
+            .status.fivehundred{color:#DD4A68}
+            .status.jackpot{color:#0dee00}
+            img{padding:5px;width:360px}
+            img:hover{box-shadow:0 0 2px 1px rgba(0,140,186,.5)}
+            pre{font-family:Inconsolata,monospace}
+            pre{margin:0 0 20px}
+            pre{overflow-x:auto}
+            article,header,img{display:block}
+            #wrapper:after,.blog-description:after,.clearfix:after{content:}
+            .container{position:relative}
+            html{line-height:1.15;-ms-text-size-adjust:100%;-webkit-text-size-adjust:100%}
+            h1{margin:.67em 0}
+            h1,h2{margin-bottom:20px}
+            a{background-color:transparent;-webkit-text-decoration-skip:objects;text-decoration:none}
+            .container,table{width:100%}
+            .site-header{overflow:auto}
+            .post-header,.post-title,.site-header,.site-title,h1,h2{text-transform:uppercase}
+            p{line-height:1.5em}
+            pre,table td{padding:10px}
+            h2{padding-top:40px;font-weight:900}
+            a{color:#00a0fc}
+            body,html{height:100%}
+            body{margin:0;background:#fefefe;color:#424242;font-family:Raleway,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,'Helvetica Neue',Arial,sans-serif;font-size:24px}
+            h1{font-size:35px}
+            h2{font-size:28px}
+            p{margin:0 0 30px}
+            pre{background:#f1f0ea;border:1px solid #dddbcc;border-radius:3px;font-size:16px}
+            .row{display:flex}
+            .column{flex:100%}
+            table tbody>tr:nth-child(odd)>td,table tbody>tr:nth-child(odd)>th{background-color:#f7f7f3}
+            table th{padding:0 10px 10px;text-align:left}
+            .post-header,.post-title,.site-header{text-align:center}
+            table tr{border-bottom:1px dotted #aeadad}
+            ::selection{background:#fff5b8;color:#000;display:block}
+            ::-moz-selection{background:#fff5b8;color:#000;display:block}
+            .clearfix:after{display:table;clear:both}
+            .container{max-width:100%}
+            #wrapper{height:auto;min-height:100%;margin-bottom:-265px}
+            #wrapper:after{display:block;height:265px}
+            .site-header{padding:40px 0 0}
+            .site-title{float:left;font-size:14px;font-weight:600;margin:0}
+            .site-title a{float:left;background:#00a0fc;color:#fefefe;padding:5px 10px 6px}
+            .post-container-left{width:49%;float:left;margin:auto}
+            .post-container-right{width:49%;float:right;margin:auto}
+            .post-header{border-bottom:1px solid #333;margin:0 0 50px;padding:0}
+            .post-title{font-size:55px;font-weight:900;margin:15px 0}
+            .blog-description{color:#aeadad;font-size:14px;font-weight:600;line-height:1;margin:25px 0 0;text-align:center}
+            .single-post-container{margin-top:50px;padding-left:15px;padding-right:15px;box-sizing:border-box}
+            body.dark{background-color:#1e2227;color:#fff}
+            body.dark pre{background:#282c34}
+            body.dark table tbody>tr:nth-child(odd)>td,body.dark table tbody>tr:nth-child(odd)>th{background:#282c34}
+            input{font-family:Inconsolata,monospace}
+            body.dark .status.redirect{color:#ecdb54}
+            body.dark input{border:1px solid ;border-radius: 3px; background:#282c34;color: white}
+            body.dark label{color:#f1f0ea}
+            body.dark pre{color:#fff}
+        </style>
+        <script>
+            document.addEventListener('DOMContentLoaded', (event) => {
+              ((localStorage.getItem('mode') || 'dark') === 'dark') ? document.querySelector('body').classList.add('dark') : document.querySelector('body').classList.remove('dark')
+            })
+        </script>
+
+        <link rel='stylesheet' type='text/css' href='https://cdnjs.cloudflare.com/ajax/libs/material-design-lite/1.1.0/material.min.css'>
+        <link rel='stylesheet' type='text/css' href='https://cdn.datatables.net/1.10.19/css/dataTables.material.min.css'>
+        <script type='text/javascript' src='https://code.jquery.com/jquery-3.3.1.js'></script>
+        <script type='text/javascript' charset='utf8' src='https://cdn.datatables.net/1.10.19/js/jquery.dataTables.js'></script>
+        <script type='text/javascript' charset='utf8' src='https://cdn.datatables.net/1.10.19/js/dataTables.material.min.js'></script>
+        <script>
+            \$(document).ready( function () {
+                \$('#myTable').DataTable({
+                    'paging':   true,
+                    'ordering': true,
+                    'info':     true,
+                     'autoWidth': true,
+                        'columns': [{ 'width': '5%' },{ 'width': '5%' },null],
+                            'lengthMenu': [[10, 25, 50,100, -1], [10, 25, 50,100, 'All']],
+
+                });
+            });
+        </script>
+    </head>
+
+    <body class='dark'>
+        <header class='site-header'>
+            <div class='site-title'>
+                <p>
+                    <a style='cursor: pointer' onclick='localStorage.setItem('mode', (localStorage.getItem('mode') || 'dark') === 'dark' ? 'bright' : 'dark'); localStorage.getItem('mode') === 'dark' ? document.querySelector('body').classList.add('dark') : document.querySelector('body').classList.remove('dark')\' title=\'Switch to light or dark theme\'>🌓 Light|dark mode</a>
+                </p>
+            </div>
+        </header>
+
+        <div id='wrapper'>
+            <div id='container'>
+                <h1 class='post-title' itemprop='name headline'>
+                    Assets overivew report of ${program_name}
+                </h1>
+                <p class='blog-description'>
+                    Generated by mr_sec_recon on $(date)
+                </p>
+                <div class='container single-post-container'>
+                    <article class='post-container-left' itemscope='' itemtype='http://schema.org/BlogPosting'>
+                        <header class='post-header'>
+                        </header>
+                        <div class='post-content clearfix' itemprop='articleBody'>
+                            <h2>Scanned Root domains</h2>
+                            <table id='myTable' class='stripe'>
+                                <thead>
+                                    <tr>
+                                        <th>Root domains</th>
+                                       <!-- <th>Scanned Urls</th> -->
+                                    </tr>
+                                </thead>
+                                <tbody>
+
+" >> $assets_overview_master_report_path
+
+for root_domain_name in $( cat "${cur_dir}/${program_name}/recon/root_domains/all_root_domains.txt" ) ; do
+    echo "                          <tr>
+                                        <td><a href='${cur_dir}/${program_name}/reports/assets_overview/root_domains/${root_domain_name}/${root_domain_name}_master.html' target='_blank'>${root_domain_name}</a></td>
+                                    <tr>
+    " >> $assets_overview_master_report_path
+done
+
+echo "                           <tbody>
+                            </table>
+                            <div>
+                                <h2>Possible Subdomains Takeovers of ${program_name}</h2></div>
+                                <pre>
+                                    $(cat ${cur_dir}/${program_name}/vuln_identification/subdomains_takeover/subjack_data/*)
+                                </pre>
+
+                            </div>
+                        </div>
+                    </article>
+                    <article class='post-container-right' itemscope='' itemtype='http://schema.org/BlogPosting'>
+                        <header class='post-header'>
+                        </header>
+                        <div class='post-content clearfix' itemprop='articleBody'>
+                            <h2>Urls using Reverse proxy </h2>
+                            <table id='myTable' class='stripe'>
+                                <thead>
+                                    <tr>
+                                        <th>Subdomain</th>
+                                        <th>Scanned Url</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+" >> $assets_overview_master_report_path
+
+for scanned_url in $( grep -F "Found a reverse proxy" ${cur_dir}/${program_name}/analysis/web/HTTP_Traceroute_data/*/* -B 30 | grep -oE '(http|https)://.*/') ; do
+    scanned_url_sub_domain_name=$(echo ${scanned_url} | awk -F/ '{print $3}' | awk -F: '{print $1}')
+    scanned_url_sub_domain_report_path=$(find ${cur_dir}/${program_name}/reports/assets_overview/root_domains -path "*/${scanned_url_sub_domain_name}.html")
+    echo "                          <tr>
+                                        <td><a href='${scanned_url_sub_domain_report_path}' target='_blank'>${scanned_url_sub_domain_name}</a></td>
+                                        <td><a href='${scanned_url}' target='_blannk'>${scanned_url}</a></td>
+                                    <tr>
+    " >> $assets_overview_master_report_path
+done
+echo "
+                                </tbody>
+                            </table>
+                        </div>
+                    </article>
+                </div>
+            </div>
+        </div>
+    </body>
+" >> $assets_overview_master_report_path
+# =========== Master report generation ends ===========
+echo -e $Green "[*]" $Purple "Open Assets Overview Master Report ...."
+xdg-open $assets_overview_master_report_path
