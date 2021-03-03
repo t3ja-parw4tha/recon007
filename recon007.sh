@@ -118,7 +118,7 @@ fuzzing(){
     if [ ! -f "$dir/fuzzing" ]
         then 
             mkdir -p $dir/fuzzing
-            for script in $(cat $dir/probed_http.txt);do ffuf -c -w ~/Tools/fuzz_wordlist.txt -u $script/FUZZ -mc 200,402,403,302,500 -maxtime 300 -timeout 2 | tee -a $dir/fuzzing/$script.tmp
+            for script in $(cat $dir/probed_http.txt);do ffuf -c -w ~/Tools/fuzz_wordlist.txt -u $script/FUZZ -mc 200,402,403,302,500 -maxtime 300 -timeout 2 | tee -a $dir/fuzzing/$script.tmp ;done
             cat $dir/fuzzing/$script.tmp | jq '[.results[]|{status: .status, length: .length, url: .url}]' | grep -oP "status\":\s(\d{3})|length\":\s(\d{1,7})|url\":\s\"(http[s]?:\/\/.*?)\"" | paste -d' ' - - - | awk '{print $2" "$4" "$6}' | sed 's/\"//g' | anew -q $dir/fuzzing/$script.txt
             rm $dir/fuzzing/$script.tmp
             echo -e "${Blue} fuzzing is done${Reset}\n\n"
