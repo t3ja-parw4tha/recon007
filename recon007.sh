@@ -10,10 +10,10 @@ Cyan="\033[0;36m"
 White="\033[0;37m"
 Reset="\033[0;m"
 
-if [ -z "$domain" ]     
+if [[ ! $# -eq 2 ]];     
         then
                 echo -e $Cyan "\n\tUsage:" $Green "recon_007.sh <program name>" $Reset
-                exit 1
+                exit 
 fi
 
 
@@ -122,7 +122,7 @@ fuzzing(){
             cat $dir/fuzzing/$script.tmp | jq '[.results[]|{status: .status, length: .length, url: .url}]' | grep -oP "status\":\s(\d{3})|length\":\s(\d{1,7})|url\":\s\"(http[s]?:\/\/.*?)\"" | paste -d' ' - - - | awk '{print $2" "$4" "$6}' | sed 's/\"//g' | anew -q $dir/fuzzing/$script.txt
             rm $dir/fuzzing/$script.tmp
             echo -e "${Blue} fuzzing is done${Reset}\n\n"
-    fi            
+    fi
 }
 
 
