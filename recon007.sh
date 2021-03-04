@@ -20,11 +20,12 @@ if [ ! -d "~/Recon" ]; then
 	mkdir ~/Recon
 fi
 
+mkdir ~/Recon/$1
+dir=~/Recon/$1
+
 subdomain_enum(){
-	if [ ! -f "~/Recon/$1" ];
+	if [ ! -f "$dir/subs.txt" ];
 		then
-            		mkdir -p ~/Recon/$1
-			dir=~/Recon/$1
 			echo -e "${Yellow} Running : Subdomain Enumeration${Reset}\n"
 			subfinder -d $1 -o $dir/subfinder_results.txt 
 			assetfinder --subs-only $1 $DEBUG_ERROR | anew -q $dir/assetfinder_results.txt
@@ -42,7 +43,6 @@ subdomain_enum(){
 	fi
 }
 
-dir=~/Recon/$1
 
 subdomain_bruteforce(){
     if [ ! -f "$dir/enum_subs.txt" ]
