@@ -16,19 +16,15 @@ echo -e "Use VPN or VPS for not getting banned."
 echo -e "Results will be automatically saved in ~/Recon directory."
 echo -e $Default
 
-# if [ ! -d "~/Recon" ]; then
-# 	mkdir ~/Recon
-# fi
-
-
-[[  ! -d ~/Recon ]] && mkdir ~/Recon
-
-dir=~/Recon/$domain
+if [ ! -d "~/Recon" ]; then
+	mkdir ~/Recon
+fi
 
 subdomain_enum(){
-	if [ ! -f "$dir" ]
+	if [ ! -f "~/Recon/$domain" ];
 		then
             		mkdir -p ~/Recon/$domain
+			dir=~/Recon/$domain
 			echo -e "${Yellow} Running : Subdomain Enumeration${Reset}\n"
 			subfinder -d $domain -o $dir/subfinder_results.txt 
 			assetfinder --subs-only $domain $DEBUG_ERROR | anew -q $dir/assetfinder_results.txt
@@ -36,17 +32,17 @@ subdomain_enum(){
 			findomain --quiet -t $domain -u $dir/findomain_results.txt
 			crobat -s $domain $DEBUG_ERROR | anew -q $dir/crobat_results.txt
 			timeout 5m waybackurls $domain | unfurl --unique domains | anew -q $dir/waybackurls_results.txt
-	        curl -s "https://dns.bufferover.run/dns?q=.$domain" | jq -r .FDNS_A[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$domain" | sort -u > $dir/dnsbuffer_results.txt
-	        curl -s "https://dns.bufferover.run/dns?q=.$domain" | jq -r .RDNS[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$domain" | sort -u >> $dir/dnsbuffer_results.txt
-	        curl -s "https://tls.bufferover.run/dns?q=.$domain" | jq -r .Results 2>/dev/null | cut -d ',' -f3 |grep -o "\w.*$domain"| sort -u >> $dir/dnsbuffer_results.txt
-	        sort -u $dir/dnsbuffer_results.txt -o $dir/dnsbuffer_results.txt
-	        echo -e "${Green}[+] Dns.bufferover.run Over => $(wc -l dnsbuffer_$domain.txt|awk '{ print $domain}')${Reset}"
-            eval cat $dir/*results.txt $DEBUG_ERROR | sed "s/*.//" | anew $dir/subs.txt | wc -l
-            rm $dir/*results.txt
-        else
-			printf "${Yellow} $domain is already processed, to force executing $domain delete $dir ${Reset}\n\n"
+	      	        curl -s "https://dns.bufferover.run/dns?q=.$domain" | jq -r .FDNS_A[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$domain" | sort -u > $dir/dnsbuffer_results.txt
+	     	        curl -s "https://dns.bufferover.run/dns?q=.$domain" | jq -r .RDNS[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$domain" | sort -u >> $dir/dnsbuffer_results.txt
+	     	        curl -s "https://tls.bufferover.run/dns?q=.$domain" | jq -r .Results 2>/dev/null | cut -d ',' -f3 |grep -o "\w.*$domain"| sort -u >> $dir/dnsbuffer_results.txt
+	      	        sort -u $dir/dnsbuffer_results.txt -o $dir/dnsbuffer_results.txt
+	     	        echo -e "${Green}[+] Dns.bufferover.run Over => $(wc -l dnsbuffer_$domain.txt|awk '{ print $domain}')${Reset}"
+           	        eval cat $dir/*results.txt $DEBUG_ERROR | sed "s/*.//" | anew $dir/subs.txt | wc -l
+          	        rm $dir/*results.txt
 	fi
 }
+
+dir=~/Recon/$domain
 
 subdomain_bruteforce(){
     if [ ! -f "$dir/enum_subs.txt" ]
