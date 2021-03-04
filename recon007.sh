@@ -52,7 +52,6 @@ fi
             cat ~/Recon/$1/bruteforced.txt | tee -a ~/Recon/$1/subs.txt
             sort -u ~/Recon/$1/subs.txt -o ~/Recon/$1/enum_subs.txt
             rm ~/Recon/$1/bruteforced.txt
-            rm ~/Recon/$1/subs.txt
  fi
 
 
@@ -102,7 +101,10 @@ if [ ! -f "~/Recon/$1/url_extracts.txt" ]
             echo -e "${Blue} Starting url scans......... ${Reset}\n\n"
             cat ~/Recon/$1/probed_http.txt | gau | anew -q ~/Recon/$1/urls_temp.txt
             cat ~/Recon/$1/probed_http.txt | waybackurls | anew -q ~/Recon/$1/urls_temp.txt
-            uddup -u ~/Recon/$1/urls_temp.txt -o ~/Recon/$1/url_extracts.txt
+	    cat ~/Recon/$1/urls_temp.txt | grep "$1" | grep "=" | eval qsreplace -a $DEBUG_ERROR | egrep -iv "\.(eot|jpg|jpeg|gif|css|tif|tiff|png|ttf|otf|woff|woff2|ico|pdf|svg|txt|js)" | anew -q ~/Recon/$1/urls_temp2.txt
+            uddup -u ~/Recon/$1/urls_temp2.txt -o ~/Recon/$1/url_extracts.txt
+	    rm ~/Recon/$1/urls_temp.txt
+	    rm ~/Recon/$1/urls_temp2.txt
  fi
 
 
@@ -111,7 +113,7 @@ if [ ! -f "~/Recon/$1/fuzzing" ]
         then 
             mkdir -p ~/Recon/$1/fuzzing
             for script in $(cat ~/Recon/$1/probed_http.txt);do ffuf -c -w ~/Tools/fuzz_wordlist.txt -u $script/FUZZ -mc 200,402,403,302,500 -maxtime 300 -timeout 2 | tee -a ~/Recon/$1/fuzzing/$script.tmp ;done
-	    eval cat ~/Recon/$1/fuzzing/${sub_out}.tmp $DEBUG_ERROR | jq '[.results[]|{status: .status, length: .length, url: .url}]' | grep -oP "status\":\s(\d{3})|length\":\s(\d{1,7})|url\":\s\"(http[s]?:\/\/.*?)\"" | paste -d' ' - - - | awk '{print $2" "$4" "$6}' | sed 's/\"//g' | anew -q ~/Recon/$1/fuzzing/${sub_out}.txt
+	    eval cat ~/Recon/$1/fuzzing/$script.tmp $DEBUG_ERROR | jq '[.results[]|{status: .status, length: .length, url: .url}]' | grep -oP "status\":\s(\d{3})|length\":\s(\d{1,7})|url\":\s\"(http[s]?:\/\/.*?)\"" | paste -d' ' - - - | awk '{print $2" "$4" "$6}' | sed 's/\"//g' | anew -q ~/Recon/$1/fuzzing/${sub_out}.txt
 	    rm ~/Recon/$1/fuzzing/$script.tmp
             echo -e "${Blue} fuzzing is done${Reset}\n\n"
 fi
@@ -143,6 +145,8 @@ if [ ! -f "~/Recon/$1/gf" ]
             cat ~/Recon/$1/url_extracts.txt | gf lfi > ~/Recon/$1/gf/lfi.txt
             cat ~/Recon/$1/url_extracts.txt | gf ssti > ~/Recon/$1/gf/ssti.txt
 fi
+
+
 
 
   
