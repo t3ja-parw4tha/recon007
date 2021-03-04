@@ -21,35 +21,35 @@ if [ ! -d "~/Recon" ]; then
 fi
 
 subdomain_enum(){
-	if [ ! -f "~/Recon/$domain" ];
+	if [ ! -f "~/Recon/$1" ];
 		then
-            		mkdir -p ~/Recon/$domain
-			dir=~/Recon/$domain
+            		mkdir -p ~/Recon/$1
+			dir=~/Recon/$1
 			echo -e "${Yellow} Running : Subdomain Enumeration${Reset}\n"
-			subfinder -d $domain -o $dir/subfinder_results.txt 
-			assetfinder --subs-only $domain $DEBUG_ERROR | anew -q $dir/assetfinder_results.txt
-			amass enum -passive -d $domain -config $AMASS_CONFIG -o $dir/amass_results.txt
-			findomain --quiet -t $domain -u $dir/findomain_results.txt
-			crobat -s $domain $DEBUG_ERROR | anew -q $dir/crobat_results.txt
-			timeout 5m waybackurls $domain | unfurl --unique domains | anew -q $dir/waybackurls_results.txt
-	      	        curl -s "https://dns.bufferover.run/dns?q=.$domain" | jq -r .FDNS_A[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$domain" | sort -u > $dir/dnsbuffer_results.txt
-	     	        curl -s "https://dns.bufferover.run/dns?q=.$domain" | jq -r .RDNS[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$domain" | sort -u >> $dir/dnsbuffer_results.txt
-	     	        curl -s "https://tls.bufferover.run/dns?q=.$domain" | jq -r .Results 2>/dev/null | cut -d ',' -f3 |grep -o "\w.*$domain"| sort -u >> $dir/dnsbuffer_results.txt
+			subfinder -d $1 -o $dir/subfinder_results.txt 
+			assetfinder --subs-only $1 $DEBUG_ERROR | anew -q $dir/assetfinder_results.txt
+			amass enum -passive -d $1 -config $AMASS_CONFIG -o $dir/amass_results.txt
+			findomain --quiet -t $1 -u $dir/findomain_results.txt
+			crobat -s $1 $DEBUG_ERROR | anew -q $dir/crobat_results.txt
+			timeout 5m waybackurls $1 | unfurl --unique domains | anew -q $dir/waybackurls_results.txt
+	      	        curl -s "https://dns.bufferover.run/dns?q=.$1" | jq -r .FDNS_A[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$1" | sort -u > $dir/dnsbuffer_results.txt
+	     	        curl -s "https://dns.bufferover.run/dns?q=.$1" | jq -r .RDNS[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$1" | sort -u >> $dir/dnsbuffer_results.txt
+	     	        curl -s "https://tls.bufferover.run/dns?q=.$1" | jq -r .Results 2>/dev/null | cut -d ',' -f3 |grep -o "\w.*$1"| sort -u >> $dir/dnsbuffer_results.txt
 	      	        sort -u $dir/dnsbuffer_results.txt -o $dir/dnsbuffer_results.txt
-	     	        echo -e "${Green}[+] Dns.bufferover.run Over => $(wc -l dnsbuffer_$domain.txt|awk '{ print $domain}')${Reset}"
+	     	        echo -e "${Green}[+] Dns.bufferover.run Over => $(wc -l dnsbuffer_$1.txt|awk '{ print $1}')${Reset}"
            	        eval cat $dir/*results.txt $DEBUG_ERROR | sed "s/*.//" | anew $dir/subs.txt | wc -l
           	        rm $dir/*results.txt
 	fi
 }
 
-dir=~/Recon/$domain
+dir=~/Recon/$1
 
 subdomain_bruteforce(){
     if [ ! -f "$dir/enum_subs.txt" ]
         then
             echo -e "${Yellow}#####starting shuffledns#####${Reset}"
             touch 
-            shuffledns -d $domain -w ~/Tools/subdomains.txt -r ~/Tools/resolvers.txt -t 1000 -o $dir/bruteforced.txt
+            shuffledns -d $1 -w ~/Tools/subdomains.txt -r ~/Tools/resolvers.txt -t 1000 -o $dir/bruteforced.txt
             cat $dir/bruteforced.txt | tee -a $dir/subs.txt
             sort -u $dir/subs.txt -o $dir/enum_subs.txt
             rm $dir/bruteforced.txt
@@ -60,9 +60,9 @@ subdomain_bruteforce(){
 subdomain_bruteforce(){
     if [ ! -f "$dir/dns_subs.txt" 
         then
-            shuffledns -d $domain -list $dir/subs.txt -r ~/Tools/resolvers -t 5000 -o $dir/dns_subs.txt
-            $domain | dnsx -silent | anew -q $dir/dns_subs.txt
-            dnsx -retry 3 -silent -cname -resp-only -l $dir/dns_subs.txt | grep ".$domain$" | anew -q $dir/dns_subs.txt
+            shuffledns -d $1 -list $dir/subs.txt -r ~/Tools/resolvers -t 5000 -o $dir/dns_subs.txt
+            $1 | dnsx -silent | anew -q $dir/dns_subs.txt
+            dnsx -retry 3 -silent -cname -resp-only -l $dir/dns_subs.txt | grep ".$1$" | anew -q $dir/dns_subs.txt
     fi
 }
 
