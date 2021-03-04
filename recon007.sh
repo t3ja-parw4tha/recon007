@@ -48,7 +48,6 @@ fi
  if [ ! -f "~/Recon/$1/enum_subs.txt" ]
         then
             echo -e "${Yellow}#####starting shuffledns#####${Reset}"
-            touch 
             shuffledns -d $1 -w ~/Tools/subdomains.txt -r ~/Tools/resolvers.txt -t 1000 -o ~/Recon/$1/bruteforced.txt
             cat ~/Recon/$1/bruteforced.txt | tee -a ~/Recon/$1/subs.txt
             sort -u ~/Recon/$1/subs.txt -o ~/Recon/$1/enum_subs.txt
@@ -58,7 +57,7 @@ fi
 
 
 
-if [ ! -f "~/Recon/$1/dns_subs.txt" 
+if [ ! -f "~/Recon/$1/dns_subs.txt" ]
         then
             shuffledns -d $1 -list ~/Recon/$1/subs.txt -r ~/Tools/resolvers -t 5000 -o ~/Recon/$1/dns_subs.txt
             $1 | dnsx -silent | anew -q ~/Recon/$1/dns_subs.txt
@@ -71,7 +70,7 @@ if [ ! -f "~/Recon/$1/probed.txt" ]
 		then
 			printf "${yellow} Checking for live subdomains" ${Reset}
 			touch ~/Recon/$1/probed.txt
-			cat ~/Recon/$1/*subs.txt| httpx -follow-redirects -status-code -vhost -timeout 15 -silent >> ~/Recon/$1/probed.txt
+			cat ~/Recon/$1/*subs.txt| httpx -follow-redirects -status-code -timeout 15 -silent >> ~/Recon/$1/probed.txt
             cat ~/Recon/$1/*subs.txt| httpx >> ~/Recon/$1/probed_http.txt
 fi
 
@@ -83,17 +82,17 @@ if [ ! -f "~/Recon/$1/nuclei" ]
             mkdir ~/Recon/$1/nuclei
             cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/cves/ -o ~/Recon/$1/nuclei/cves.txt
             cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/files/ -o ~/Recon/$1/nuclei/files.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/miscellaneous/ -o nuclei_op/miscellaneous.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/misconfiguration/ -o nuclei_op/misconfiguration.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/technologies/ -o nuclei_op/technologies.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposed-tokens/ -o nuclei_op/exposed-tokens.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposed-panels/ -o nuclei_op/exposed-panels.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposures/ -o nuclei_op/exposures.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/vulnerabilities/ -o nuclei_op/vulnerabilities.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/dns/ -o nuclei_op/dns.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/default-logins/ -o nuclei_op/default-logins.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/fuzzing/ -o nuclei_op/fuzzing.txt
-            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/workflows/ -o nuceli_op/workflows.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/miscellaneous/ -o ~/Recon/$1/miscellaneous.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/misconfiguration/ -o ~/Recon/$1/misconfiguration.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/technologies/ -o ~/Recon/$1/technologies.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposed-tokens/ -o ~/Recon/$1/exposed-tokens.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposed-panels/ -o ~/Recon/$1/exposed-panels.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposures/ -o ~/Recon/$1/exposures.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/vulnerabilities/ -o ~/Recon/$1/vulnerabilities.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/dns/ -o ~/Recon/$1/dns.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/default-logins/ -o ~/Recon/$1/default-logins.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/fuzzing/ -o ~/Recon/$1/fuzzing.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/workflows/ -o ~/Recon/$1/workflows.txt
 fi            
 
 
