@@ -10,19 +10,13 @@ Cyan="\033[0;36m"
 White="\033[0;37m"
 Reset="\033[0;m"
 
-if [[ ! $# -eq 2 ]];     
-        then
-                echo -e $Cyan "\n\tUsage:" $Green "recon_007.sh <program name>" $Reset
-                exit 
-fi
-
 
 echo -e $Purple
 echo -e "Use VPN or VPS for not getting banned."
 echo -e "Results will be automatically saved in ~/Recon directory."
 echo -e $Default
 
-if [ ! -d ~/"Recon" ]; then
+if [ ! -d "~/Recon" ]; then
 	mkdir ~/Recon
 fi
 
@@ -31,7 +25,7 @@ dir=~/Recon/$domain
 subdomain_enum(){
 	if [ ! -f "$dir" ]
 		then
-            mkdir -p ~/Recon/$domain
+            		mkdir -p ~/Recon/$domain
 			echo -e "${Yellow} Running : Subdomain Enumeration${Reset}\n"
 			subfinder -d $domain -o $dir/subfinder_results.txt 
 			assetfinder --subs-only $domain $DEBUG_ERROR | anew -q $dir/assetfinder_results.txt
