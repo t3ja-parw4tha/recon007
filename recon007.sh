@@ -16,9 +16,12 @@ echo -e "Use VPN or VPS for not getting banned."
 echo -e "Results will be automatically saved in ~/Recon directory."
 echo -e $Default
 
-if [ ! -d "~/Recon" ]; then
-	mkdir ~/Recon
-fi
+# if [ ! -d "~/Recon" ]; then
+# 	mkdir ~/Recon
+# fi
+
+
+[[  ! -d ~/Recon ]] && mkdir ~/Recon
 
 dir=~/Recon/$domain
 
