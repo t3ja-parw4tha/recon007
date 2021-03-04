@@ -24,125 +24,125 @@ if [ ! -d "~/Recon/$1" ]; then
 	mkdir ~/Recon/$1
 fi
 
-dir=~/Recon/$1
+#dir=~/Recon/$1
 
-if [ ! -f "$dir/subs.txt" ];
+if [ ! -f "~/Recon/$1/subs.txt" ];
 	then
 		echo -e "${Yellow} Running : Subdomain Enumeration${Reset}\n"
-		subfinder -d $1 -o $dir/subfinder_results.txt 
-		assetfinder --subs-only $1 $DEBUG_ERROR | anew -q $dir/assetfinder_results.txt
-		amass enum -passive -d $1 -config $AMASS_CONFIG -o $dir/amass_results.txt
-		findomain --quiet -t $1 -u $dir/findomain_results.txt
-		crobat -s $1 $DEBUG_ERROR | anew -q $dir/crobat_results.txt
-		timeout 5m waybackurls $1 | unfurl --unique domains | anew -q $dir/waybackurls_results.txt
-	        curl -s "https://dns.bufferover.run/dns?q=.$1" | jq -r .FDNS_A[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$1" | sort -u > $dir/dnsbuffer_results.txt
-     	        curl -s "https://dns.bufferover.run/dns?q=.$1" | jq -r .RDNS[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$1" | sort -u >> $dir/dnsbuffer_results.txt
-		curl -s "https://tls.bufferover.run/dns?q=.$1" | jq -r .Results 2>/dev/null | cut -d ',' -f3 |grep -o "\w.*$1"| sort -u >> $dir/dnsbuffer_results.txt
-	        sort -u $dir/dnsbuffer_results.txt -o $dir/dnsbuffer_results.txt
+		subfinder -d $1 -o ~/Recon/$1/subfinder_results.txt 
+		assetfinder --subs-only $1 $DEBUG_ERROR | anew -q ~/Recon/$1/assetfinder_results.txt
+		amass enum -passive -d $1 -config $AMASS_CONFIG -o ~/Recon/$1/amass_results.txt
+		findomain --quiet -t $1 -u ~/Recon/$1/findomain_results.txt
+		crobat -s $1 $DEBUG_ERROR | anew -q ~/Recon/$1/crobat_results.txt
+		timeout 5m waybackurls $1 | unfurl --unique domains | anew -q ~/Recon/$1/waybackurls_results.txt
+	        curl -s "https://dns.bufferover.run/dns?q=.$1" | jq -r .FDNS_A[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$1" | sort -u > ~/Recon/$1/dnsbuffer_results.txt
+     	        curl -s "https://dns.bufferover.run/dns?q=.$1" | jq -r .RDNS[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$1" | sort -u >> ~/Recon/$1/dnsbuffer_results.txt
+		curl -s "https://tls.bufferover.run/dns?q=.$1" | jq -r .Results 2>/dev/null | cut -d ',' -f3 |grep -o "\w.*$1"| sort -u >> ~/Recon/$1/dnsbuffer_results.txt
+	        sort -u ~/Recon/$1/dnsbuffer_results.txt -o ~/Recon/$1/dnsbuffer_results.txt
      	        echo -e "${Green}[+] Dns.bufferover.run Over => $(wc -l dnsbuffer_$1.txt|awk '{ print $1}')${Reset}"
-		eval cat $dir/*results.txt $DEBUG_ERROR | sed "s/*.//" | anew $dir/subs.txt | wc -l
-                rm $dir/*results.txt
+		eval cat ~/Recon/$1/*results.txt $DEBUG_ERROR | sed "s/*.//" | anew ~/Recon/$1/subs.txt | wc -l
+                rm ~/Recon/$1/*results.txt
 fi
 
 
- if [ ! -f "$dir/enum_subs.txt" ]
+ if [ ! -f "~/Recon/$1/enum_subs.txt" ]
         then
             echo -e "${Yellow}#####starting shuffledns#####${Reset}"
             touch 
-            shuffledns -d $1 -w ~/Tools/subdomains.txt -r ~/Tools/resolvers.txt -t 1000 -o $dir/bruteforced.txt
-            cat $dir/bruteforced.txt | tee -a $dir/subs.txt
-            sort -u $dir/subs.txt -o $dir/enum_subs.txt
-            rm $dir/bruteforced.txt
-            rm $dir/subs.txt
+            shuffledns -d $1 -w ~/Tools/subdomains.txt -r ~/Tools/resolvers.txt -t 1000 -o ~/Recon/$1/bruteforced.txt
+            cat ~/Recon/$1/bruteforced.txt | tee -a ~/Recon/$1/subs.txt
+            sort -u ~/Recon/$1/subs.txt -o ~/Recon/$1/enum_subs.txt
+            rm ~/Recon/$1/bruteforced.txt
+            rm ~/Recon/$1/subs.txt
  fi
 
 
 
-if [ ! -f "$dir/dns_subs.txt" 
+if [ ! -f "~/Recon/$1/dns_subs.txt" 
         then
-            shuffledns -d $1 -list $dir/subs.txt -r ~/Tools/resolvers -t 5000 -o $dir/dns_subs.txt
-            $1 | dnsx -silent | anew -q $dir/dns_subs.txt
-            dnsx -retry 3 -silent -cname -resp-only -l $dir/dns_subs.txt | grep ".$1$" | anew -q $dir/dns_subs.txt
+            shuffledns -d $1 -list ~/Recon/$1/subs.txt -r ~/Tools/resolvers -t 5000 -o ~/Recon/$1/dns_subs.txt
+            $1 | dnsx -silent | anew -q ~/Recon/$1/dns_subs.txt
+            dnsx -retry 3 -silent -cname -resp-only -l ~/Recon/$1/dns_subs.txt | grep ".$1$" | anew -q ~/Recon/$1/dns_subs.txt
 fi
 
 
 
-if [ ! -f "$dir/probed.txt" ]
+if [ ! -f "~/Recon/$1/probed.txt" ]
 		then
 			printf "${yellow} Checking for live subdomains" ${Reset}
-			touch $dir/probed.txt
-			cat $dir/*subs.txt| httpx -follow-redirects -status-code -vhost -timeout 15 -silent >> $dir/probed.txt
-            cat $dir/*subs.txt| httpx >> $dir/probed_http.txt
+			touch ~/Recon/$1/probed.txt
+			cat ~/Recon/$1/*subs.txt| httpx -follow-redirects -status-code -vhost -timeout 15 -silent >> ~/Recon/$1/probed.txt
+            cat ~/Recon/$1/*subs.txt| httpx >> ~/Recon/$1/probed_http.txt
 fi
 
 
 
-if [ ! -f "$dir/nuclei" ]
+if [ ! -f "~/Recon/$1/nuclei" ]
         then
             echo -e "${Blue} Starting nuclei......... ${Reset}\n\n"
-            mkdir $dir/nuclei
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/cves/ -o $dir/nuclei/cves.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/files/ -o $dir/nuclei/files.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/miscellaneous/ -o nuclei_op/miscellaneous.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/misconfiguration/ -o nuclei_op/misconfiguration.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/technologies/ -o nuclei_op/technologies.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposed-tokens/ -o nuclei_op/exposed-tokens.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposed-panels/ -o nuclei_op/exposed-panels.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposures/ -o nuclei_op/exposures.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/vulnerabilities/ -o nuclei_op/vulnerabilities.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/dns/ -o nuclei_op/dns.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/default-logins/ -o nuclei_op/default-logins.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/fuzzing/ -o nuclei_op/fuzzing.txt
-            cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/workflows/ -o nuceli_op/workflows.txt
+            mkdir ~/Recon/$1/nuclei
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/cves/ -o ~/Recon/$1/nuclei/cves.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/files/ -o ~/Recon/$1/nuclei/files.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/miscellaneous/ -o nuclei_op/miscellaneous.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/misconfiguration/ -o nuclei_op/misconfiguration.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/technologies/ -o nuclei_op/technologies.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposed-tokens/ -o nuclei_op/exposed-tokens.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposed-panels/ -o nuclei_op/exposed-panels.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/exposures/ -o nuclei_op/exposures.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/vulnerabilities/ -o nuclei_op/vulnerabilities.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/dns/ -o nuclei_op/dns.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/default-logins/ -o nuclei_op/default-logins.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/fuzzing/ -o nuclei_op/fuzzing.txt
+            cat ~/Recon/$1/probed_http.txt | nuclei -silent -t ~/nuclei-templates/workflows/ -o nuceli_op/workflows.txt
 fi            
 
 
 
-if [ ! -f "$dir/url_extracts.txt" ]
+if [ ! -f "~/Recon/$1/url_extracts.txt" ]
         then
             echo -e "${Blue} Starting url scans......... ${Reset}\n\n"
-            cat $dir/probed_http.txt | gau | anew -q $dir/urls_temp.txt
-            cat $dir/probed_http.txt | waybackurls | anew -q $dir/urls_temp.txt
-            uddup -u $dir/urls_temp.txt -o $dir/url_extracts.txt
+            cat ~/Recon/$1/probed_http.txt | gau | anew -q ~/Recon/$1/urls_temp.txt
+            cat ~/Recon/$1/probed_http.txt | waybackurls | anew -q ~/Recon/$1/urls_temp.txt
+            uddup -u ~/Recon/$1/urls_temp.txt -o ~/Recon/$1/url_extracts.txt
  fi
 
 
 
-if [ ! -f "$dir/fuzzing" ]
+if [ ! -f "~/Recon/$1/fuzzing" ]
         then 
-            mkdir -p $dir/fuzzing
-            for script in $(cat $dir/probed_http.txt);do ffuf -c -w ~/Tools/fuzz_wordlist.txt -u $script/FUZZ -mc 200,402,403,302,500 -maxtime 300 -timeout 2 | tee -a $dir/fuzzing/$script.tmp ;done
-	    eval cat $dir/fuzzing/${sub_out}.tmp $DEBUG_ERROR | jq '[.results[]|{status: .status, length: .length, url: .url}]' | grep -oP "status\":\s(\d{3})|length\":\s(\d{1,7})|url\":\s\"(http[s]?:\/\/.*?)\"" | paste -d' ' - - - | awk '{print $2" "$4" "$6}' | sed 's/\"//g' | anew -q $dir/fuzzing/${sub_out}.txt
-	    rm $dir/fuzzing/$script.tmp
+            mkdir -p ~/Recon/$1/fuzzing
+            for script in $(cat ~/Recon/$1/probed_http.txt);do ffuf -c -w ~/Tools/fuzz_wordlist.txt -u $script/FUZZ -mc 200,402,403,302,500 -maxtime 300 -timeout 2 | tee -a ~/Recon/$1/fuzzing/$script.tmp ;done
+	    eval cat ~/Recon/$1/fuzzing/${sub_out}.tmp $DEBUG_ERROR | jq '[.results[]|{status: .status, length: .length, url: .url}]' | grep -oP "status\":\s(\d{3})|length\":\s(\d{1,7})|url\":\s\"(http[s]?:\/\/.*?)\"" | paste -d' ' - - - | awk '{print $2" "$4" "$6}' | sed 's/\"//g' | anew -q ~/Recon/$1/fuzzing/${sub_out}.txt
+	    rm ~/Recon/$1/fuzzing/$script.tmp
             echo -e "${Blue} fuzzing is done${Reset}\n\n"
 fi
 
 
 
 
-if [ ! -f "$dir/reflected_xss.txt" ]
+if [ ! -f "~/Recon/$1/reflected_xss.txt" ]
         then
-            mkdir $dir/xss
-            for script in $(cat $dir/probed_http.txt);do python3 ~/Tools/ParamSpider/paramspider.py -d $script --subs False --exclude png,jpg,svg,js,css,eot,ttf,woff,woff2,jpeg,axd --placeholder '"><script>confirm(1)</script>' --quiet --output $dir/xss/$script.txt ;done
-            cat $dir/xss/*.txt >> $dir/xss/all_urls.txt
-            cat $dir/xss/all_urls.txt | while read host do ; do curl --silent --path-as-is --insecure "$host" | grep -qs "<script>confirm(1)" && echo -e "$host ${Red}Vulnerable ${Reset}\n" || echo -e "$host ${Blue}Not Exploitable ${Reset}\n";done >> $dir/reflected_xss.txt
+            mkdir ~/Recon/$1/xss
+            for script in $(cat ~/Recon/$1/probed_http.txt);do python3 ~/Tools/ParamSpider/paramspider.py -d $script --subs False --exclude png,jpg,svg,js,css,eot,ttf,woff,woff2,jpeg,axd --placeholder '"><script>confirm(1)</script>' --quiet --output ~/Recon/$1/xss/$script.txt ;done
+            cat ~/Recon/$1/xss/*.txt >> ~/Recon/$1/xss/all_urls.txt
+            cat ~/Recon/$1/xss/all_urls.txt | while read host do ; do curl --silent --path-as-is --insecure "$host" | grep -qs "<script>confirm(1)" && echo -e "$host ${Red}Vulnerable ${Reset}\n" || echo -e "$host ${Blue}Not Exploitable ${Reset}\n";done >> ~/Recon/$1/reflected_xss.txt
           
 	  ###### To search for vulnerable urls  ###
-	  ###### cat $dir/reflected_xss.txt | grep "Vulnerable" ###
+	  ###### cat ~/Recon/$1/reflected_xss.txt | grep "Vulnerable" ###
 fi
 
 
 
-if [ ! -f "$dir/gf" ]
+if [ ! -f "~/Recon/$1/gf" ]
         then
-            mkdir $dir/gf
-            cat $dir/url_extracts.txt | gf redirect > $dir/gf/redirect.txt
-            cat $dir/url_extracts.txt | gf ssrf > $dir/gf/ssrf.txt
-            cat $dir/url_extracts.txt | gf rce > $dir/gf/rce.txt
-            cat $dir/url_extracts.txt | gf idor > $dir/gf/idor.txt
-            cat $dir/url_extracts.txt | gf sqli > $dir/gf/sqli.txt
-            cat $dir/url_extracts.txt | gf lfi > $dir/gf/lfi.txt
-            cat $dir/url_extracts.txt | gf ssti > $dir/gf/ssti.txt
+            mkdir ~/Recon/$1/gf
+            cat ~/Recon/$1/url_extracts.txt | gf redirect > ~/Recon/$1/gf/redirect.txt
+            cat ~/Recon/$1/url_extracts.txt | gf ssrf > ~/Recon/$1/gf/ssrf.txt
+            cat ~/Recon/$1/url_extracts.txt | gf rce > ~/Recon/$1/gf/rce.txt
+            cat ~/Recon/$1/url_extracts.txt | gf idor > ~/Recon/$1/gf/idor.txt
+            cat ~/Recon/$1/url_extracts.txt | gf sqli > ~/Recon/$1/gf/sqli.txt
+            cat ~/Recon/$1/url_extracts.txt | gf lfi > ~/Recon/$1/gf/lfi.txt
+            cat ~/Recon/$1/url_extracts.txt | gf ssti > ~/Recon/$1/gf/ssti.txt
 fi
 
 
