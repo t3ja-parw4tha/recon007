@@ -20,10 +20,13 @@ if [ ! -d "~/Recon" ]; then
 	mkdir ~/Recon
 fi
 
-mkdir ~/Recon/$1
+if [ ! -d "~/Recon/$1" ]; then
+	mkdir ~/Recon/$1
+fi
+
 dir=~/Recon/$1
 
-subdomain_enum(){
+function subdomain_enum(){
 	if [ ! -f "$dir/subs.txt" ];
 		then
 			echo -e "${Yellow} Running : Subdomain Enumeration${Reset}\n"
