@@ -26,29 +26,26 @@ fi
 
 dir=~/Recon/$1
 
-function subdomain_enum(){
-	if [ ! -f "$dir/subs.txt" ];
-		then
-			echo -e "${Yellow} Running : Subdomain Enumeration${Reset}\n"
-			subfinder -d $1 -o $dir/subfinder_results.txt 
-			assetfinder --subs-only $1 $DEBUG_ERROR | anew -q $dir/assetfinder_results.txt
-			amass enum -passive -d $1 -config $AMASS_CONFIG -o $dir/amass_results.txt
-			findomain --quiet -t $1 -u $dir/findomain_results.txt
-			crobat -s $1 $DEBUG_ERROR | anew -q $dir/crobat_results.txt
-			timeout 5m waybackurls $1 | unfurl --unique domains | anew -q $dir/waybackurls_results.txt
-	      	        curl -s "https://dns.bufferover.run/dns?q=.$1" | jq -r .FDNS_A[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$1" | sort -u > $dir/dnsbuffer_results.txt
-	     	        curl -s "https://dns.bufferover.run/dns?q=.$1" | jq -r .RDNS[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$1" | sort -u >> $dir/dnsbuffer_results.txt
-	     	        curl -s "https://tls.bufferover.run/dns?q=.$1" | jq -r .Results 2>/dev/null | cut -d ',' -f3 |grep -o "\w.*$1"| sort -u >> $dir/dnsbuffer_results.txt
-	      	        sort -u $dir/dnsbuffer_results.txt -o $dir/dnsbuffer_results.txt
-	     	        echo -e "${Green}[+] Dns.bufferover.run Over => $(wc -l dnsbuffer_$1.txt|awk '{ print $1}')${Reset}"
-           	        eval cat $dir/*results.txt $DEBUG_ERROR | sed "s/*.//" | anew $dir/subs.txt | wc -l
-          	        rm $dir/*results.txt
-	fi
-}
+if [ ! -f "$dir/subs.txt" ];
+	then
+		echo -e "${Yellow} Running : Subdomain Enumeration${Reset}\n"
+		subfinder -d $1 -o $dir/subfinder_results.txt 
+		assetfinder --subs-only $1 $DEBUG_ERROR | anew -q $dir/assetfinder_results.txt
+		amass enum -passive -d $1 -config $AMASS_CONFIG -o $dir/amass_results.txt
+		findomain --quiet -t $1 -u $dir/findomain_results.txt
+		crobat -s $1 $DEBUG_ERROR | anew -q $dir/crobat_results.txt
+		timeout 5m waybackurls $1 | unfurl --unique domains | anew -q $dir/waybackurls_results.txt
+	        curl -s "https://dns.bufferover.run/dns?q=.$1" | jq -r .FDNS_A[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$1" | sort -u > $dir/dnsbuffer_results.txt
+     	        curl -s "https://dns.bufferover.run/dns?q=.$1" | jq -r .RDNS[] 2>/dev/null | cut -d ',' -f2 | grep -o "\w.*$1" | sort -u >> $dir/dnsbuffer_results.txt
+		curl -s "https://tls.bufferover.run/dns?q=.$1" | jq -r .Results 2>/dev/null | cut -d ',' -f3 |grep -o "\w.*$1"| sort -u >> $dir/dnsbuffer_results.txt
+	        sort -u $dir/dnsbuffer_results.txt -o $dir/dnsbuffer_results.txt
+     	        echo -e "${Green}[+] Dns.bufferover.run Over => $(wc -l dnsbuffer_$1.txt|awk '{ print $1}')${Reset}"
+		eval cat $dir/*results.txt $DEBUG_ERROR | sed "s/*.//" | anew $dir/subs.txt | wc -l
+                rm $dir/*results.txt
+fi
 
 
-subdomain_bruteforce(){
-    if [ ! -f "$dir/enum_subs.txt" ]
+ if [ ! -f "$dir/enum_subs.txt" ]
         then
             echo -e "${Yellow}#####starting shuffledns#####${Reset}"
             touch 
@@ -57,30 +54,30 @@ subdomain_bruteforce(){
             sort -u $dir/subs.txt -o $dir/enum_subs.txt
             rm $dir/bruteforced.txt
             rm $dir/subs.txt
-    fi
-}
+ fi
 
-subdomain_bruteforce(){
-    if [ ! -f "$dir/dns_subs.txt" 
+
+
+if [ ! -f "$dir/dns_subs.txt" 
         then
             shuffledns -d $1 -list $dir/subs.txt -r ~/Tools/resolvers -t 5000 -o $dir/dns_subs.txt
             $1 | dnsx -silent | anew -q $dir/dns_subs.txt
             dnsx -retry 3 -silent -cname -resp-only -l $dir/dns_subs.txt | grep ".$1$" | anew -q $dir/dns_subs.txt
-    fi
-}
+fi
 
-probing(){
-	if [ ! -f "$dir/probed.txt" ]
+
+
+if [ ! -f "$dir/probed.txt" ]
 		then
 			printf "${yellow} Checking for live subdomains" ${Reset}
 			touch $dir/probed.txt
 			cat $dir/*subs.txt| httpx -follow-redirects -status-code -vhost -timeout 15 -silent >> $dir/probed.txt
             cat $dir/*subs.txt| httpx >> $dir/probed_http.txt
-	fi
-}
+fi
 
-nuclei(){
-    if [ ! -f "$dir/nuclei" ]
+
+
+if [ ! -f "$dir/nuclei" ]
         then
             echo -e "${Blue} Starting nuclei......... ${Reset}\n\n"
             mkdir $dir/nuclei
@@ -97,54 +94,46 @@ nuclei(){
             cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/default-logins/ -o nuclei_op/default-logins.txt
             cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/fuzzing/ -o nuclei_op/fuzzing.txt
             cat $dir/probed_http.txt | nuclei -silent -t ~/nuclei-templates/workflows/ -o nuceli_op/workflows.txt
-    fi            
-}
+fi            
 
-urls(){
-    if [ ! -f "$dir/url_extracts.txt" ]
+
+
+if [ ! -f "$dir/url_extracts.txt" ]
         then
             echo -e "${Blue} Starting url scans......... ${Reset}\n\n"
             cat $dir/probed_http.txt | gau | anew -q $dir/urls_temp.txt
             cat $dir/probed_http.txt | waybackurls | anew -q $dir/urls_temp.txt
             uddup -u $dir/urls_temp.txt -o $dir/url_extracts.txt
-    fi
-}
+ fi
 
-fuzzing(){
-    if [ ! -f "$dir/fuzzing" ]
+
+
+if [ ! -f "$dir/fuzzing" ]
         then 
             mkdir -p $dir/fuzzing
             for script in $(cat $dir/probed_http.txt);do ffuf -c -w ~/Tools/fuzz_wordlist.txt -u $script/FUZZ -mc 200,402,403,302,500 -maxtime 300 -timeout 2 | tee -a $dir/fuzzing/$script.tmp ;done
 	    eval cat $dir/fuzzing/${sub_out}.tmp $DEBUG_ERROR | jq '[.results[]|{status: .status, length: .length, url: .url}]' | grep -oP "status\":\s(\d{3})|length\":\s(\d{1,7})|url\":\s\"(http[s]?:\/\/.*?)\"" | paste -d' ' - - - | awk '{print $2" "$4" "$6}' | sed 's/\"//g' | anew -q $dir/fuzzing/${sub_out}.txt
 	    rm $dir/fuzzing/$script.tmp
             echo -e "${Blue} fuzzing is done${Reset}\n\n"
-    fi
-}
+fi
 
 
-###### do not automate ######
-# 403_bypasser(){
-#     if [ ! -f "$dir/403_bypasser" ]
-#         then
-#             echo -e "${Blue} Starting 403_bypass checks.... ${Reset}\n\n"
-#             mkdir -p $dir/403_bypasser
-#             cat $dir/fuzzing/*.txt | grep '^403*' >> 403_urls.txt
-#     fi
-# }
-            
- xss_check(){
-    if [ ! -f "$dir/reflected_xss.txt" ]
+
+
+if [ ! -f "$dir/reflected_xss.txt" ]
         then
             mkdir $dir/xss
             for script in $(cat $dir/probed_http.txt);do python3 ~/Tools/ParamSpider/paramspider.py -d $script --subs False --exclude png,jpg,svg,js,css,eot,ttf,woff,woff2,jpeg,axd --placeholder '"><script>confirm(1)</script>' --quiet --output $dir/xss/$script.txt ;done
             cat $dir/xss/*.txt >> $dir/xss/all_urls.txt
             cat $dir/xss/all_urls.txt | while read host do ; do curl --silent --path-as-is --insecure "$host" | grep -qs "<script>confirm(1)" && echo -e "$host ${Red}Vulnerable ${Reset}\n" || echo -e "$host ${Blue}Not Exploitable ${Reset}\n";done >> $dir/reflected_xss.txt
-            # cat $dir/reflected_xss.txt | grep "Vulnerable" ####
-    fi
-}
+          
+	  ###### To search for vulnerable urls  ###
+	  ###### cat $dir/reflected_xss.txt | grep "Vulnerable" ###
+fi
 
-gf_urls(){
-    if [ ! -f "$dir/gf" ]
+
+
+if [ ! -f "$dir/gf" ]
         then
             mkdir $dir/gf
             cat $dir/url_extracts.txt | gf redirect > $dir/gf/redirect.txt
@@ -154,8 +143,8 @@ gf_urls(){
             cat $dir/url_extracts.txt | gf sqli > $dir/gf/sqli.txt
             cat $dir/url_extracts.txt | gf lfi > $dir/gf/lfi.txt
             cat $dir/url_extracts.txt | gf ssti > $dir/gf/ssti.txt
-    fi
-}
+fi
+
 
   
 
